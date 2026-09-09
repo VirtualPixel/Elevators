@@ -1,23 +1,28 @@
-using System.Collections;
 using HarmonyLib;
 using Upstairs.Configuration;
 using Upstairs.Services;
 
 namespace Upstairs.Patches
 {
-    [HarmonyPatch(typeof(ValuableDirector), "SpawnValuable")]
-    internal static class SpawnValuablePatch
-    {
-        private static void Postfix(ValuableVolume _volume) => LootPass.Used.Add(_volume);
-    }
-
+    // SetupHost gathers every valuable spot in the scene on its first step, so the new floors'
+    // spots are hidden just before it starts and put back once the ground floor is done.
     [HarmonyPatch(typeof(ValuableDirector), "SetupHost")]
     internal static class SetupHostPatch
     {
-        private static void Postfix(ValuableDirector __instance, ref IEnumerator __result)
+        private static void Prefix()
         {
-            if (Session.Active && PluginConfig.ExtraLoot.Value > 0)
-                __result = LootPass.After(__instance, __result);
+            if (Session.Active && SemiFunc.IsMasterClientOrSingleplayer())
+                LootPass.HideNewFloors();
+        }
+    }
+
+    [HarmonyPatch(typeof(ValuableDirector), "VolumesAndSwitchSetup")]
+    internal static class VolumesAndSwitchSetupPatch
+    {
+        private static void Prefix(ValuableDirector __instance)
+        {
+            if (Session.Active && SemiFunc.IsMasterClientOrSingleplayer() && PluginConfig.ExtraLoot.Value > 0)
+                LootPass.FillNewFloors(__instance);
         }
     }
 }

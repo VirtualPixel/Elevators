@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Reflection;
+using HarmonyLib;
 using UnityEngine;
 using UnityEngine.AI;
 using Upstairs.Configuration;
@@ -15,7 +17,7 @@ namespace Upstairs.Services
         private const float PadRadius = 1.3f;
         private const float PadHeight = 1.6f;
         private const float LeaveMargin = 0.7f;
-        private const float VoidPatience = 1.5f;
+        private const float VoidPatience = 2f;
 
         private sealed class Pad
         {
@@ -35,11 +37,30 @@ namespace Upstairs.Services
         private readonly List<Pad> pads = new List<Pad>();
         private readonly Dictionary<PlayerAvatar, Rider> riders = new Dictionary<PlayerAvatar, Rider>();
         private Pad? groundPad;
-        private float voidLowFrom, voidLowTo, voidHighFrom, voidHighTo;
+        private int roomMask;
         private bool active;
         private float tick;
 
-        private void Awake() => Instance = this;
+        // FreeFly (a sibling mod) keeps a flying host outside every room on purpose; ask it before rescuing anyone.
+        private static readonly MethodInfo? flying = ResolveFlying();
+
+        private void Awake()
+        {
+            Instance = this;
+            roomMask = LayerMask.GetMask("RoomVolume");
+        }
+
+        private static MethodInfo? ResolveFlying()
+        {
+            var type = AccessTools.TypeByName("FreeFly.Services.FlyNet");
+            MethodInfo? method = type == null ? null : AccessTools.Method(type, "IsFlying", new[] { typeof(PlayerAvatar) });
+            return method != null && method.IsStatic && method.ReturnType == typeof(bool) ? method : null;
+        }
+
+        private static bool IsFlying(PlayerAvatar avatar)
+        {
+            return flying != null && (bool)flying.Invoke(null, new object[] { avatar });
+        }
 
         public void Clear()
         {
@@ -61,7 +82,6 @@ namespace Upstairs.Services
             pads.Add(ground);
             groundPad = ground;
 
-            voidLowFrom = voidLowTo = voidHighFrom = voidHighTo = 0f;
             if (Session.Up != null)
             {
                 Pad? up = FloorPad(Session.Up, ground.Position);
@@ -70,8 +90,6 @@ namespace Upstairs.Services
                     ground.Up = up;
                     up.Down = ground;
                     pads.Add(up);
-                    voidHighFrom = Session.GroundTop + 1f;
-                    voidHighTo = Session.Up.Y + Session.Up.PickBottom - 1f;
                 }
             }
             if (Session.Down != null)
@@ -82,8 +100,6 @@ namespace Upstairs.Services
                     ground.Down = down;
                     down.Up = ground;
                     pads.Add(down);
-                    voidLowFrom = Session.Down.Y + Session.Down.PickTop + 1f;
-                    voidLowTo = Session.GroundBottom - 1f;
                 }
             }
             active = pads.Count > 1;
@@ -104,6 +120,7 @@ namespace Upstairs.Services
             tick = 0f;
 
             float cooldown = PluginConfig.LiftCooldown.Value;
+            bool rescue = PluginConfig.VoidRescue.Value && groundPad != null;
             foreach (PlayerAvatar avatar in SemiFunc.PlayerGetAll())
             {
                 if (!avatar || avatar.isDisabled || avatar.deadSet || !avatar.tumble)
@@ -134,13 +151,13 @@ namespace Upstairs.Services
                     continue;
                 }
 
-                if (groundPad != null && InVoid(pos.y))
+                if (rescue && !InAnyRoom(pos) && !IsFlying(avatar))
                 {
                     rider.VoidTime += dt;
                     if (rider.VoidTime >= VoidPatience)
                     {
-                        Plugin.LogInfo($"[Lift] {avatar.playerName} fell between floors at y={pos.y:0.0}, sent back to the lift");
-                        Ride(avatar, rider, groundPad, cooldown);
+                        Plugin.LogInfo($"[Lift] {avatar.playerName} was outside every room at {pos}, sent back to the lift");
+                        Ride(avatar, rider, groundPad!, cooldown);
                     }
                 }
                 else
@@ -164,6 +181,44 @@ namespace Upstairs.Services
             Plugin.LogInfo($"[Lift] {avatar.playerName} -> {dest.Name}");
         }
 
+        // Hooks for the probe build that drives a headless playthrough; nothing in the game calls these.
+        internal string Describe()
+        {
+            var parts = new List<string>();
+            foreach (Pad pad in pads)
+                parts.Add($"{pad.Name}@{pad.Position}");
+            return parts.Count == 0 ? "no pads" : string.Join(" | ", parts);
+        }
+
+        internal bool TryGetPad(string name, out Vector3 position)
+        {
+            foreach (Pad pad in pads)
+            {
+                if (pad.Name == name)
+                {
+                    position = pad.Position;
+                    return true;
+                }
+            }
+            position = Vector3.zero;
+            return false;
+        }
+
+        internal void ProbeRide(PlayerAvatar avatar, string padName)
+        {
+            foreach (Pad pad in pads)
+            {
+                if (pad.Name != padName)
+                    continue;
+                if (!riders.TryGetValue(avatar, out Rider rider))
+                {
+                    rider = new Rider();
+                    riders[avatar] = rider;
+                }
+                Ride(avatar, rider, pad, PluginConfig.LiftCooldown.Value);
+            }
+        }
+
         private Pad? PadUnder(Vector3 pos)
         {
             foreach (Pad pad in pads)
@@ -174,10 +229,9 @@ namespace Upstairs.Services
             return null;
         }
 
-        private bool InVoid(float y)
+        private bool InAnyRoom(Vector3 pos)
         {
-            return (voidHighTo > voidHighFrom && y > voidHighFrom && y < voidHighTo)
-                || (voidLowTo > voidLowFrom && y > voidLowFrom && y < voidLowTo);
+            return Physics.CheckSphere(pos + Vector3.up * 0.6f, 0.25f, roomMask, QueryTriggerInteraction.Collide);
         }
 
         private static float Flat(Vector3 a, Vector3 b)

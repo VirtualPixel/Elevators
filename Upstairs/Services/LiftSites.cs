@@ -30,11 +30,12 @@ namespace Upstairs.Services
 
     internal static class LiftSites
     {
-        // The Museum elevator is stuck between floors, so its landing at the ground doors is the pad.
+        // The Museum elevator is an open shaft you drop down to reach its sub floor, so the pad sits in
+        // the corridor right at the shaft mouth.
         // The stair rooms use their highest path point, which is the top landing.
         public static readonly LiftSite[] All =
         {
-            new LiftSite("Museum", "Module - Museum - P - 3 - Elevator To Sub Floor", FloorPlan.Kind.Passage, "at the elevator doors", highest: false, 4.0f, 0f, -1.9f),
+            new LiftSite("Museum", "Module - Museum - P - 3 - Elevator To Sub Floor", FloorPlan.Kind.Passage, "beside the elevator shaft", highest: false, 1.8f, 0f, 0f),
             new LiftSite("Manor", "Module - Manor - N - 3 - Long Stairs", FloorPlan.Kind.Normal, "at the top of the long stairs", highest: true),
             new LiftSite("Arctic", "Module - Arctic - P - 2 - Stair Corridor", FloorPlan.Kind.Passage, "at the top of the stair corridor", highest: true),
             new LiftSite("Wizard", "Module - Wizard - N - 2 - Upstairs Classroom", FloorPlan.Kind.Normal, "up in the classroom", highest: true),

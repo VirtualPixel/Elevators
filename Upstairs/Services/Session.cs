@@ -43,7 +43,7 @@ namespace Upstairs.Services
             Hint = "";
             GroundTop = 0f;
             GroundBottom = 0f;
-            LootPass.Used.Clear();
+            LootPass.Reset();
         }
 
         public static bool ShouldRun(LevelGenerator lg)
@@ -128,23 +128,25 @@ namespace Upstairs.Services
         {
             MeasureGround();
             List<string> avoid = RoomFilter.Parse(PluginConfig.AvoidRooms.Value);
+            // Each floor is published before its rooms spawn, so the rooms' own setup (room volumes,
+            // the map) already knows which floor they belong to.
             if (UpPlan != null)
             {
-                var floor = new Floor(UpPlan, above: true);
-                IEnumerator build = FloorBuilder.Build(lg, floor, GroundTop, GroundBottom, avoid);
+                Up = new Floor(UpPlan, above: true);
+                IEnumerator build = FloorBuilder.Build(lg, Up, GroundTop, GroundBottom, avoid);
                 while (build.MoveNext())
                     yield return build.Current;
-                if (floor.Modules.Count > 0)
-                    Up = floor;
+                if (Up.Modules.Count == 0)
+                    Up = null;
             }
             if (DownPlan != null)
             {
-                var floor = new Floor(DownPlan, above: false);
-                IEnumerator build = FloorBuilder.Build(lg, floor, GroundTop, GroundBottom, avoid);
+                Down = new Floor(DownPlan, above: false);
+                IEnumerator build = FloorBuilder.Build(lg, Down, GroundTop, GroundBottom, avoid);
                 while (build.MoveNext())
                     yield return build.Current;
-                if (floor.Modules.Count > 0)
-                    Down = floor;
+                if (Down.Modules.Count == 0)
+                    Down = null;
             }
             if (Up == null && Down == null)
                 Active = false;

@@ -20,6 +20,7 @@ namespace Upstairs.Configuration
         public static ConfigEntry<string> AvoidRooms = null!;
         public static ConfigEntry<float> LiftCooldown = null!;
         public static ConfigEntry<bool> Announce = null!;
+        public static ConfigEntry<bool> VoidRescue = null!;
         public static ConfigEntry<VerbosityLevel> LoggingLevel = null!;
 
         public static void Init(ConfigFile config)
@@ -38,9 +39,9 @@ namespace Upstairs.Configuration
                 "Rooms on each new floor, as a percent of the rooms on the ground floor.",
                 new AcceptableValueRange<int>(20, 100)));
 
-            ExtraLoot = config.Bind("Floors", "ExtraLoot", 40, new ConfigDescription(
-                "Extra valuables placed on the new floors, as a percent of the valuables the level would normally have. " +
-                "The game already spreads its normal valuables over every floor; this is on top. The quota grows with them like any other valuable.",
+            ExtraLoot = config.Bind("Floors", "ExtraLoot", 50, new ConfigDescription(
+                "Valuables on the new floors, as a percent of what the ground floor gets. The ground floor keeps its normal amount, " +
+                "these are on top, and the quota grows with them like any other valuable.",
                 new AcceptableValueRange<int>(0, 150)));
 
             EnemiesOnNewFloors = config.Bind("Floors", "EnemiesOnNewFloors", false,
@@ -53,6 +54,9 @@ namespace Upstairs.Configuration
             LiftCooldown = config.Bind("Lift", "LiftCooldown", 4f, new ConfigDescription(
                 "Seconds before the same player can ride the lift again.",
                 new AcceptableValueRange<float>(1f, 15f)));
+
+            VoidRescue = config.Bind("Lift", "VoidRescue", true,
+                "A player who spends a couple of seconds outside every room, on a roof between floors say, gets lifted back to the ground pad.");
 
             Announce = config.Bind("Lift", "Announce", true,
                 "Call out the new floor and where the lift is once the level loads, using the game's moon-phase popup. " +
