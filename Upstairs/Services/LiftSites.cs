@@ -1,0 +1,55 @@
+using System;
+
+namespace Upstairs.Services
+{
+    // Rooms that already look like they go somewhere vertical. The lift lands in one of these
+    // when the level has one, so the ride starts where a player would expect it to.
+    internal sealed class LiftSite
+    {
+        public string LevelKey { get; }
+        public string ModuleName { get; }
+        public FloorPlan.Kind Kind { get; }
+        public bool PadAtHighestPoint { get; }
+        public float PadX { get; }
+        public float PadY { get; }
+        public float PadZ { get; }
+        public string Hint { get; }
+
+        public LiftSite(string levelKey, string moduleName, FloorPlan.Kind kind, string hint, bool highest, float padX = 0f, float padY = 0f, float padZ = 0f)
+        {
+            LevelKey = levelKey;
+            ModuleName = moduleName;
+            Kind = kind;
+            Hint = hint;
+            PadAtHighestPoint = highest;
+            PadX = padX;
+            PadY = padY;
+            PadZ = padZ;
+        }
+    }
+
+    internal static class LiftSites
+    {
+        // The Museum elevator is stuck between floors, so its landing at the ground doors is the pad.
+        // The stair rooms use their highest path point, which is the top landing.
+        public static readonly LiftSite[] All =
+        {
+            new LiftSite("Museum", "Module - Museum - P - 3 - Elevator To Sub Floor", FloorPlan.Kind.Passage, "at the elevator doors", highest: false, 4.0f, 0f, -1.9f),
+            new LiftSite("Manor", "Module - Manor - N - 3 - Long Stairs", FloorPlan.Kind.Normal, "at the top of the long stairs", highest: true),
+            new LiftSite("Arctic", "Module - Arctic - P - 2 - Stair Corridor", FloorPlan.Kind.Passage, "at the top of the stair corridor", highest: true),
+            new LiftSite("Wizard", "Module - Wizard - N - 2 - Upstairs Classroom", FloorPlan.Kind.Normal, "up in the classroom", highest: true),
+        };
+
+        public static LiftSite? For(string? levelName)
+        {
+            if (string.IsNullOrEmpty(levelName))
+                return null;
+            foreach (LiftSite site in All)
+            {
+                if (levelName!.IndexOf(site.LevelKey, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return site;
+            }
+            return null;
+        }
+    }
+}
