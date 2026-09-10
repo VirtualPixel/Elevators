@@ -474,8 +474,8 @@ namespace UpstairsProbe
                 return true;
             __instance.levelCurrent = Probe.Forced;
             // Deep enough into a run for several extraction points and the bigger grid.
-            if (__instance.levelsCompleted < 4)
-                __instance.levelsCompleted = 4;
+            if (__instance.levelsCompleted < 12)
+                __instance.levelsCompleted = 12;
             return false;
         }
     }

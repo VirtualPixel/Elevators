@@ -26,6 +26,20 @@ namespace Upstairs.Patches
         }
     }
 
+    // Before the grid is laid, the ground floor's room count is held to GroundRooms through the
+    // generator's own size multiplier; the rooms it gives up are planned onto the other floors.
+    [HarmonyPatch(typeof(LevelGenerator), "TileGeneration")]
+    internal static class TileGenerationPatch
+    {
+        private static void Prefix(LevelGenerator __instance)
+        {
+            if (!SemiFunc.RunIsLevel())
+                return;
+            __instance.DebugLevelSize = LevelSize.GroundFactor();
+            Plugin.LogInfo($"[Plan] level {(RunManager.instance != null ? RunManager.instance.levelsCompleted : -1) + 1}: the game wants {LevelSize.Vanilla()} rooms, ground factor {__instance.DebugLevelSize:0.00}");
+        }
+    }
+
     // The grid is final once the game starts placing rooms, so the plan is drawn here.
     [HarmonyPatch(typeof(LevelGenerator), "ModuleGeneration")]
     internal static class ModuleGenerationPatch

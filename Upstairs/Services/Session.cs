@@ -42,6 +42,8 @@ namespace Upstairs.Services
         private static bool? liftAxisVertical;
         private static bool[,]? groundGrid;
         private static int cellCount;
+        private static int upCells;
+        private static int downCells;
         private static int passageCap;
         private static System.Random? planRng;
 
@@ -126,16 +128,35 @@ namespace Upstairs.Services
             }
 
             int count = FloorGap.CellCount(activeCells, PluginConfig.FloorSize.Value);
+            // The rooms the ground floor gave up go upstairs, then down: each floor gets the larger
+            // of its usual share and its part of that surplus, so a deep level's growth turns into
+            // height rather than piling on top of it.
+            int surplus = Mathf.Max(0, LevelSize.Vanilla() - lg.ModuleAmount);
+            int upCount = count;
+            int downCount = count;
+            if (PluginConfig.UpperFloor.Value && PluginConfig.Basement.Value)
+            {
+                upCount = Mathf.Max(count, (surplus + 1) / 2);
+                downCount = Mathf.Max(count, surplus / 2);
+            }
+            else if (PluginConfig.UpperFloor.Value)
+                upCount = Mathf.Max(count, surplus);
+            else
+                downCount = Mathf.Max(count, surplus);
             int passageMax = lg.Level.PassageMaxAmount;
             groundGrid = ground;
             cellCount = count;
+            upCells = upCount;
+            downCells = downCount;
             passageCap = passageMax;
             planRng = rng;
             bool? axis = Site != null && Site.Shaft ? liftAxisVertical : null;
             if (PluginConfig.UpperFloor.Value)
-                UpPlan = FloorPlan.Build(ground, LiftX, LiftY, count, passageMax, rng, axis, LiftSide);
+                UpPlan = FloorPlan.Build(ground, LiftX, LiftY, upCount, passageMax, rng, axis, LiftSide);
             if (PluginConfig.Basement.Value)
-                DownPlan = FloorPlan.Build(ground, LiftX, LiftY, count, passageMax, rng, axis, LiftSide);
+                DownPlan = FloorPlan.Build(ground, LiftX, LiftY, downCount, passageMax, rng, axis, LiftSide);
+            if (surplus > 0)
+                Plugin.LogInfo($"[Plan] ground held to {lg.ModuleAmount} main rooms instead of {LevelSize.Vanilla()}, the floors carry the rest");
             roomsFromTruck = RoomsFromTruck(ground, width / 2, 0, LiftX, LiftY);
             Hint = Site?.Hint ?? FallbackHint();
             Active = true;
@@ -151,23 +172,38 @@ namespace Upstairs.Services
             moveExtraction = false;
             extractionsSeen = 0;
             extractionsOnGround = lg.ExtractionAmount;
-            if (!PluginConfig.ExtractionOnNewFloors.Value || extractionsOnGround < 2)
+            if (!PluginConfig.ExtractionOnNewFloors.Value)
+                return;
+            // A held-back ground floor has fewer extraction rooms than the level should; the
+            // missing ones go on the new floors. When nothing is missing, one still moves up.
+            int missing = Mathf.Max(0, LevelSize.Extractions(LevelSize.Vanilla()) - extractionsOnGround);
+            Plugin.LogInfo($"[Plan] extraction rooms: ground has {extractionsOnGround} of the {LevelSize.Extractions(LevelSize.Vanilla())} a {LevelSize.Vanilla()}-room level gets (ground rooms {lg.ModuleAmount}, factor {lg.DebugLevelSize:0.00})");
+            bool move = missing == 0 && extractionsOnGround >= 2;
+            int wanted = missing + (move ? 1 : 0);
+            if (wanted == 0)
                 return;
             // The upper floor first: a basement can still be dropped at build time when the level
             // runs too deep, and it would take the point with it.
             var floors = new List<FloorPlan>();
             if (UpPlan != null) floors.Add(UpPlan);
             if (DownPlan != null) floors.Add(DownPlan);
+            int placed = 0;
             foreach (FloorPlan plan in floors)
             {
-                var leaves = plan.Cells.FindAll(c => c.Kind == FloorPlan.Kind.DeadEnd && !(c.X == plan.LiftX && c.Y == plan.LiftY));
-                if (leaves.Count == 0)
-                    continue;
-                leaves[rng.Next(leaves.Count)].Extraction = true;
-                moveExtraction = true;
-                Plugin.LogInfo($"[Plan] one of {extractionsOnGround} extraction points goes {(plan == UpPlan ? "upstairs" : "to the basement")}");
-                return;
+                var leaves = plan.Cells.FindAll(c => c.Kind == FloorPlan.Kind.DeadEnd && !c.Extraction && !(c.X == plan.LiftX && c.Y == plan.LiftY));
+                while (placed < wanted && leaves.Count > 0)
+                {
+                    FloorPlan.Cell leaf = leaves[rng.Next(leaves.Count)];
+                    leaves.Remove(leaf);
+                    leaf.Extraction = true;
+                    placed++;
+                    Plugin.LogInfo($"[Plan] an extraction point goes {(plan == UpPlan ? "upstairs" : "to the basement")}");
+                }
             }
+            // The ground swap only happens when its point was found a place.
+            moveExtraction = move && placed > 0;
+            if (placed < wanted)
+                Plugin.LogInfo($"[Plan] {wanted - placed} extraction point(s) found no dead end on the new floors");
         }
 
         private static PrefabRef? PlainDeadEnd(LevelGenerator lg)
@@ -469,8 +505,8 @@ namespace Upstairs.Services
             if (planRng != null)
             {
                 bool? axis = Site != null && Site.Shaft ? liftAxisVertical : null;
-                if (UpPlan != null) UpPlan = FloorPlan.Build(groundGrid, LiftX, LiftY, cellCount, passageCap, planRng, axis, LiftSide);
-                if (DownPlan != null) DownPlan = FloorPlan.Build(groundGrid, LiftX, LiftY, cellCount, passageCap, planRng, axis, LiftSide);
+                if (UpPlan != null) UpPlan = FloorPlan.Build(groundGrid, LiftX, LiftY, upCells, passageCap, planRng, axis, LiftSide);
+                if (DownPlan != null) DownPlan = FloorPlan.Build(groundGrid, LiftX, LiftY, downCells, passageCap, planRng, axis, LiftSide);
             }
         }
 

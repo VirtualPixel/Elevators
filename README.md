@@ -27,6 +27,7 @@ The game does not always roll those rooms, and when it does not you get the plai
 ## What changes, what does not
 
 - Rooms on the new floor come from the level's normal, passage and dead end lists. Nothing custom, nothing that looks out of place.
+- The ground floor is held to `GroundRooms` rooms (8 by default, a third level's size). Past that, the rooms a deep level would sprawl across go on the other floors instead, extraction rooms included, so a late level grows up rather than a long way out from the truck.
 - On a level with two or more extraction points, one of them stands on a new floor. The count is the game's own, the map's route walks you to the elevator for it, and the haul loop is otherwise untouched. `ExtractionOnNewFloors` turns it off.
 - The ground floor keeps its normal loot. The new floors get `ExtraLoot` percent of that on top (30 by default), placed the way the game places its own. The quota grows with them the way it does with any valuable.
 - Monsters follow. The game moves a monster that has lost you to a fresh spot some way off, and those spots include the floor you rode to, so a ride buys time, not safety. The elevator is loud: leaving and arriving draws anything close to the shaft, and a monster that had you in its sights when the doors shut turns up on your new floor a little while later, out of sight and looking. Monsters also ride it on their own now and then: an idle one near a dock calls the car, stands at the doors as they close, and steps out on another floor, four times in five one with someone on it. More floors, more rides. Every dock carries the shaft's sound, so a car being called, moving, and landing can be heard by the doors on any floor. The Shadow Child skips the elevator and simply appears. Turn `EnemiesOnNewFloors` off to keep them downstairs, `MonsterPatrolInterval` to 0 to stop the rides.
@@ -41,6 +42,7 @@ The game does not always roll those rooms, and when it does not you get the plai
 | Enabled | `true` | The whole thing |
 | UpperFloor | `true` | Build the floor above |
 | Basement | `false` | Build a floor below as well. Crouch on the lift to reach it |
+| GroundRooms | `8` | Most rooms on the ground floor; the rest of a deep level goes on the other floors, 0 for the game's size |
 | FloorSize | `60` | Rooms on each new floor as a percent of the ground floor's rooms |
 | ExtraLoot | `30` | Valuables on the new floors, percent of what the ground floor gets |
 | EnemiesOnNewFloors | `true` | Monsters turn up on the new floors too |

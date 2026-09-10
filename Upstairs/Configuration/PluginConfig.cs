@@ -15,6 +15,7 @@ namespace Upstairs.Configuration
         public static ConfigEntry<bool> UpperFloor = null!;
         public static ConfigEntry<bool> Basement = null!;
         public static ConfigEntry<int> FloorSize = null!;
+        public static ConfigEntry<int> GroundRooms = null!;
         public static ConfigEntry<int> ExtraLoot = null!;
         public static ConfigEntry<bool> EnemiesOnNewFloors = null!;
         public static ConfigEntry<float> MonsterPatrolInterval = null!;
@@ -39,6 +40,10 @@ namespace Upstairs.Configuration
             FloorSize = config.Bind("Floors", "FloorSize", 60, new ConfigDescription(
                 "Rooms on each new floor, as a percent of the rooms on the ground floor.",
                 new AcceptableValueRange<int>(20, 100)));
+
+            GroundRooms = config.Bind("Floors", "GroundRooms", 8, new ConfigDescription(
+                "The most rooms the ground floor gets. Late levels sprawl a long way from the truck; past this many rooms the extra ones go on the other floors instead, extraction rooms included, so the level grows up rather than out. 8 is the size of a third level. 0 leaves the ground floor the game's size.",
+                new AcceptableValueRange<int>(0, 20)));
 
             ExtraLoot = config.Bind("Floors", "ExtraLoot", 30, new ConfigDescription(
                 "Valuables on the new floors, as a percent of what the ground floor gets. The ground floor keeps its normal amount, " +

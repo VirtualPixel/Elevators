@@ -11,7 +11,7 @@ First release.
 - Monsters follow you upstairs by the game's own respawn shuffle, an elevator leaving or landing draws whatever is nearby to the shaft, and one that had you in its sights when the doors shut turns up on your new floor a little later. Every so often an idle monster rides the elevator to another floor, and every dock carries the shaft's sound so you hear it coming.
 - Call opens the doors when the car is there, a second press mid-trip queues the next floor, and a press the car can't honour gets the upgrade stand's refusal.
 - Optional basement.
-- One extraction point on a new floor when the level has two or more, the count unchanged.
+- The ground floor is held to eight rooms; what a deep level would sprawl across goes on the other floors instead, extraction rooms included, so late levels grow up rather than out. With nothing to move up, one extraction point still goes to a new floor.
 - The ground floor keeps its normal loot; the new floors get a modest share on top (30 percent by default). The quota grows with it like any other valuable.
 - Monsters keep to the ground floor unless you say otherwise.
 - The gap between floors is measured per level from the tallest and deepest rooms, so nothing pokes through. End up outside every room and the lift catches you.
