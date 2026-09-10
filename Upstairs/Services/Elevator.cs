@@ -1392,14 +1392,40 @@ namespace Upstairs.Services
                 if (atDock != from || Moving)
                     yield break;
             }
-            yield return new WaitForSeconds(2.5f);
+            // Doors open, and the monster walks up to them while they stand open.
+            openHold = 25f;
+            if (rider.Enemy.HasStateInvestigate)
+                rider.Enemy.StateInvestigate.Set(docks[from].Landing, false);
+            float walked = 0f;
+            while (walked < 20f)
+            {
+                yield return new WaitForSeconds(0.5f);
+                walked += 0.5f;
+                if (rider == null || !rider.Spawned || rider.Enemy == null || Moving || atDock != from)
+                {
+                    openHold = 0f;
+                    yield break;
+                }
+                if (Vector3.Distance(rider.Enemy.transform.position, docks[from].Landing) < 2.5f)
+                    break;
+                if (walked >= 8f && rider.Enemy.HasStateInvestigate)
+                    rider.Enemy.StateInvestigate.Set(docks[from].Landing, false);
+            }
             if (rider == null || !rider.Spawned || rider.Enemy == null || Moving || atDock != from)
+            {
+                openHold = 0f;
                 yield break;
+            }
             if (rider.Enemy.CheckChase() || LocalInside() || PlayerWithin(car!.transform.parent.position, 3f))
+            {
+                openHold = 0f;
                 yield break;
-            // At the doors as they shut.
+            }
+            // At the doors as they shut. One that never made the walk is brought the last stretch.
             if (Vector3.Distance(rider.Enemy.transform.position, docks[from].Landing) > 4f)
                 rider.Enemy.EnemyTeleported(docks[from].Landing);
+            yield return new WaitForSeconds(1f);
+            openHold = 0f;
             if (!TryDepart(to))
                 yield break;
             float w = 0f;
@@ -1490,6 +1516,7 @@ namespace Upstairs.Services
             doorWait = DoorTime;
             // A press inside the landing pause must not let that pause open the doors mid-trip.
             landWait = 0f;
+            openHold = 0f;
             doorsHeld = true;
             toDock = to;
             atDock = -1;
@@ -1497,7 +1524,7 @@ namespace Upstairs.Services
             localRiding = LocalInside();
             Play(sounds?.soundActivate1, root.position);
             PlayAtDocks(sounds?.soundActivate1, root.position, 0.5f);
-            EnemyDirector.instance?.SetInvestigate(root.position, 20f);
+            HearTheShaft();
             Plugin.LogInfo($"[Elevator] {docks[from].Name} -> {docks[to].Name}, {travelLength:0} m, rider={localRiding}");
         }
 
@@ -1624,7 +1651,7 @@ namespace Upstairs.Services
                 PlayAtDocks(sounds?.soundActivate3, next, 0.5f);
                 SemiFunc.CameraShakeImpactDistance(next, 3f, 0.2f, 4f, 18f);
                 // The whole building hears an elevator land.
-                EnemyDirector.instance?.SetInvestigate(next, 20f);
+                HearTheShaft();
                 if (queued < 0)
                     SendPursuers(next - Vector3.up * FloorOffset);
             }
@@ -1830,6 +1857,26 @@ namespace Upstairs.Services
                     hi = mid;
             }
             travelT = (lo + hi) * 0.5f;
+        }
+
+        // The shaft carries the sound to every dock: anything near one comes to look, and the
+        // Huntsman, who hunts by ear, hears it from anywhere on his floor.
+        private static void HearTheShaft()
+        {
+            if (EnemyDirector.instance == null || !SemiFunc.IsMasterClientOrSingleplayer())
+                return;
+            foreach (Dock dock in docks)
+                EnemyDirector.instance.SetInvestigate(dock.Landing, 20f);
+            foreach (EnemyParent parent in EnemyDirector.instance.enemiesSpawned)
+            {
+                if (parent == null || !parent.Spawned || parent.Enemy == null || !parent.Enemy.HasStateInvestigate)
+                    continue;
+                if (parent.Enemy.GetComponentInChildren<EnemyHunter>(true) == null)
+                    continue;
+                int dock = NearestDock(parent.Enemy.transform.position, 200f);
+                if (dock >= 0)
+                    parent.Enemy.StateInvestigate.Set(docks[dock].Landing, false);
+            }
         }
 
         // Anyone standing in the door line, inside or just outside the car.
