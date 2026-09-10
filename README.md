@@ -31,6 +31,7 @@ On the Museum it rides the actual shaft, elevator room on every floor, sub floor
 This is the part I spent the longest on, because an elevator that's a safe room is a broken game.
 
 - The car floor is on the navmesh wherever the car stands. A monster chasing you walks in after you, and one inside when the doors shut steps out with you at the other end.
+- Sitting in the car with the doors shut doesn't help either. A monster that reaches the doors presses the call button like anyone would, and they open.
 - A monster that had you in its sights when the doors closed turns up on your new floor a little later, out of sight and hunting. The Shadow Child does it faster and never bothers with the car.
 - Now and then an idle monster walks to a call button, presses it, waits for the doors, and rides to another floor, usually one with someone on it. The more floors, the more often. You hear every bit of that through the doors.
 - The Huntsman hears the shaft from anywhere on his floor.
@@ -93,6 +94,7 @@ I'm Vippy. I make R.E.P.O. mods and I read every bug report.
 | **[Vippy's Discord](https://discord.gg/kKqhck2NrP)** | Bug reports, test builds before Thunderstore, and a say in what comes next. Come say hi. |
 | **[R.E.P.O. Modding Server](https://discord.gg/9fDzZ9sk95)** | The whole modding scene, not just me. |
 | **[More of my mods](https://thunderstore.io/c/repo/p/Vippy/)** | Everything else I've made for R.E.P.O. |
+| **[Source on GitHub](https://github.com/VirtualPixel/Elevators)** | The code, if you want to poke at it or send a fix. |
 
 ## Keep the mods coming
 

@@ -912,9 +912,11 @@ namespace Elevators.Services
             shutBoxes.Add((door, box));
         }
 
+        private static bool navBaking;
+
         private static void ShutBox(Transform? door, bool shut)
         {
-            if (door == null)
+            if (door == null || navBaking)
                 return;
             foreach ((Transform d, Collider box) in shutBoxes)
             {
@@ -1135,13 +1137,20 @@ namespace Elevators.Services
             // the tile at a doorway is a whole one, not one straddling it.
             for (float y0 = low.Position.y; y0 - 20f < top; y0 += 40f)
             {
+                // One frame per copy standing where the module's own shaft group would, with each
+                // part kept at its own offset inside it (the pipes sit well off the group origin).
+                var frame = new GameObject("shaft frame").transform;
+                frame.SetParent(holder, false);
+                frame.SetPositionAndRotation(new Vector3(low.Position.x, y0, low.Position.z), facing);
                 foreach (Transform? part in new[] { walls, pipes })
                 {
                     if (part == null)
                         continue;
-                    GameObject copy = Object.Instantiate(part.gameObject, holder);
+                    GameObject copy = Object.Instantiate(part.gameObject, frame);
                     StripScripts(copy);
-                    copy.transform.SetPositionAndRotation(new Vector3(low.Position.x, y0, low.Position.z), facing);
+                    copy.transform.localPosition = part.localPosition;
+                    copy.transform.localRotation = part.localRotation;
+                    copy.transform.localScale = part.localScale;
                     // Tiles sit directly under the group and under its floor groups; each one is
                     // judged by where it stands in the shaft's frame.
                     var pieces = new List<Transform>();
@@ -1157,7 +1166,7 @@ namespace Elevators.Services
                     foreach (Transform piece in pieces)
                     {
                         float y = piece.position.y;
-                        Vector3 inShaft = copy.transform.InverseTransformPoint(piece.position);
+                        Vector3 inShaft = frame.InverseTransformPoint(piece.position);
                         bool keep = y >= bottom - 0.5f && y < top;
                         if (keep && inShaft.z < -1f)
                         {
@@ -1272,6 +1281,16 @@ namespace Elevators.Services
                 Object.DestroyImmediate(joint);
             foreach (Rigidbody rb in root.GetComponentsInChildren<Rigidbody>(true))
                 Object.DestroyImmediate(rb);
+            // The Museum's car carves itself out of the navmesh so nothing paths into a parked
+            // elevator; this one wants monsters in it, so those go too.
+            int carved = 0;
+            foreach (NavMeshObstacle obstacle in root.GetComponentsInChildren<NavMeshObstacle>(true))
+            {
+                Object.DestroyImmediate(obstacle);
+                carved++;
+            }
+            if (carved > 0)
+                Plugin.LogInfo($"[Elevator] {root.name}: {carved} navmesh obstacle(s) stripped");
         }
 
         // The shaft carries sound. A speaker by every dock's doors plays the motor while the car
@@ -1526,7 +1545,29 @@ namespace Elevators.Services
             return true;
         }
 
+        internal static void StartPatrol(EnemyParent rider, int from, int to) => Plugin.Instance.StartCoroutine(Patrol(rider, from, to));
+
+        // One patrol at a time: two riders calling the car against each other is a car that
+        // never leaves.
+        private static bool patrolling;
+        internal static bool Patrolling => patrolling;
+
         private static System.Collections.IEnumerator Patrol(EnemyParent rider, int from, int to)
+        {
+            if (patrolling)
+                yield break;
+            patrolling = true;
+            try
+            {
+                yield return PatrolRide(rider, from, to);
+            }
+            finally
+            {
+                patrolling = false;
+            }
+        }
+
+        private static System.Collections.IEnumerator PatrolRide(EnemyParent rider, int from, int to)
         {
             Plugin.LogInfo($"[Elevator] {rider.enemyName} heads for the elevator at {docks[from].Name}, bound for {docks[to].Name}");
             // The monster walks to the call button first; nothing happens until it is in reach.
@@ -1537,7 +1578,7 @@ namespace Elevators.Services
             if (rider.Enemy.HasStateInvestigate)
                 rider.Enemy.StateInvestigate.Set(docks[from].Landing, false);
             float walked = 0f;
-            while (walked < 25f)
+            while (walked < 12f)
             {
                 yield return new WaitForSeconds(0.5f);
                 walked += 0.5f;
@@ -1545,11 +1586,20 @@ namespace Elevators.Services
                     yield break;
                 if (Vector3.Distance(rider.Enemy.transform.position, buttonAt) < 3f)
                     break;
-                if (walked % 8f < 0.5f && rider.Enemy.HasStateInvestigate)
+                if (walked % 6f < 0.5f && rider.Enemy.HasStateInvestigate)
                     rider.Enemy.StateInvestigate.Set(docks[from].Landing, false);
             }
-            if (rider == null || !rider.Spawned || rider.Enemy == null || Vector3.Distance(rider.Enemy.transform.position, buttonAt) >= 3f)
+            if (rider == null || !rider.Spawned || rider.Enemy == null)
                 yield break;
+            // The walk is best effort. One that dawdles, or one whose kind never investigates,
+            // is brought to the button, as long as nobody on that floor is close enough to see.
+            if (Vector3.Distance(rider.Enemy.transform.position, buttonAt) >= 3f)
+            {
+                if (PlayerWithin(docks[from].Landing, 10f, sameFloor: true))
+                    yield break;
+                rider.Enemy.EnemyTeleported(docks[from].Landing);
+                yield return new WaitForSeconds(0.5f);
+            }
             if (Moving)
                 yield break;
             // Its press: the click, and the car comes or the doors open.
@@ -1703,6 +1753,8 @@ namespace Elevators.Services
             if (!Moving)
                 localRiding = false;
             UpdateDockBlocks();
+            if (SemiFunc.IsMasterClientOrSingleplayer())
+                MonstersAtTheDoors(dt);
             // The camera eases after the body and at eight metres a second sits half a metre
             // behind it, which reads as sinking through the floor or floating off it. While the
             // car carries you, it follows tight.
@@ -1866,9 +1918,21 @@ namespace Elevators.Services
         // in the moving car simply travels at the car's speed, and a real jump is left alone.
         internal static void CarryLocal(PlayerController pc)
         {
-            if (pc == null || pc.rb == null || pc.rb.isKinematic || !Moving || doorWait > 0f)
+            if (pc == null || pc.rb == null || !Moving || doorWait > 0f)
                 return;
-            if (!IsInside(pc.transform.position))
+            // Tumbling, the body on the floor is the tumble's own, and it rides the same way.
+            PlayerAvatar avatar = pc.playerAvatarScript;
+            if (avatar != null && avatar.isTumbling && avatar.tumble != null && avatar.tumble.physGrabObject != null && avatar.tumble.physGrabObject.rb != null)
+            {
+                Rigidbody body = avatar.tumble.physGrabObject.rb;
+                if (!IsInside(body.position) || !Standing(body.position.y, body.velocity.y))
+                    return;
+                Vector3 v = body.velocity;
+                v.y = CarVelocityY;
+                body.velocity = v;
+                return;
+            }
+            if (pc.rb.isKinematic || !IsInside(pc.transform.position))
                 return;
             Vector3 vel = pc.rb.velocity;
             if (!Standing(pc.rb.position.y, vel.y))
@@ -2091,10 +2155,51 @@ namespace Elevators.Services
                 yield break;
             }
             Plugin.LogInfo($"[Elevator] navmesh surface collects {surface.collectObjects} by {surface.useGeometry}, layers {surface.layerMask.value}, agent {surface.agentTypeID}");
+            // The doors stand shut while the level bakes, and a shut door is a wall to the bake:
+            // every door collider goes quiet for the update or the doorways come out as gaps.
+            var quiet = new List<Collider>();
+            foreach ((Transform door, Collider shut) in shutBoxes)
+            {
+                if (door == null)
+                    continue;
+                foreach (Collider c in door.GetComponentsInChildren<Collider>(true))
+                {
+                    if (c.enabled)
+                    {
+                        c.enabled = false;
+                        quiet.Add(c);
+                    }
+                }
+            }
+            navBaking = true;
             var stands = new List<GameObject>();
+            int navOnly = LayerMask.NameToLayer("NavmeshOnly");
             foreach (Dock dock in docks)
             {
                 Quaternion facing = Quaternion.Euler(0f, dock.Yaw, 0f);
+                // The Museum walls its shaft mouth off from the navmesh with boxes of its own; at a
+                // doorway those go, or the car floor stays an island. They touch nothing else.
+                int cleared = 0;
+                Vector3 mouth = dock.Position + facing * new Vector3(0f, 1f, -1.6f);
+                if (navOnly >= 0)
+                {
+                    foreach (Collider c in Physics.OverlapBox(mouth, new Vector3(cageHalfWidth, 1.5f, 1.4f), facing, 1 << navOnly, QueryTriggerInteraction.Collide))
+                    {
+                        c.gameObject.SetActive(false);
+                        cleared++;
+                    }
+                }
+                foreach (NavMeshModifierVolume volume in Object.FindObjectsOfType<NavMeshModifierVolume>())
+                {
+                    Vector3 at = volume.transform.TransformPoint(volume.center);
+                    Vector3 local = Quaternion.Inverse(facing) * (at - mouth);
+                    if (Mathf.Abs(local.x) < cageHalfWidth + 1f && Mathf.Abs(local.y) < 3f && Mathf.Abs(local.z) < 2.5f)
+                    {
+                        volume.gameObject.SetActive(false);
+                        cleared++;
+                    }
+                }
+                Plugin.LogInfo($"[Elevator] {dock.Name} doorway: {cleared} navmesh blocker(s) cleared");
                 // From a step inside the room through the doorway to the back of the car, at floor
                 // height, parented under the surface so a children-only collection sees it.
                 GameObject stand = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -2127,6 +2232,20 @@ namespace Elevators.Services
                 yield return null;
             foreach (GameObject stand in stands)
                 Object.Destroy(stand);
+            navBaking = false;
+            foreach (Collider c in quiet)
+            {
+                if (c != null)
+                    c.enabled = true;
+            }
+            // Whatever the doors did during the bake, the shut boxes follow them again now.
+            ShutBox(doorL, doorOpen == 0f);
+            ShutBox(doorR, doorOpen == 0f);
+            foreach (Dock dock in docks)
+            {
+                ShutBox(dock.LandingL, dock.LandingOpen == 0f);
+                ShutBox(dock.LandingR, dock.LandingOpen == 0f);
+            }
             bool onMesh = docks.Count > 0 && NavMesh.SamplePosition(docks[0].Position, out _, 0.6f, NavMesh.AllAreas);
             Plugin.LogInfo($"[Elevator] car floor joined the navmesh at {docks.Count} docks, first dock on mesh: {onMesh}");
         }
@@ -2192,6 +2311,40 @@ namespace Elevators.Services
         }
 
         // Anyone, or anything, standing in the door line, inside or just outside the car.
+        // A monster at the shut doors of the docked car presses the call button like anyone
+        // would, so a car with its doors closed is no safe room. One press, then a breath.
+        private static float doorsLook;
+        private static float monsterPressed = -99f;
+
+        private static void MonstersAtTheDoors(float dt)
+        {
+            doorsLook -= dt;
+            if (doorsLook > 0f || Moving || atDock < 0 || doorOpen > 0f || openHold > 0f || landWait > 0f || Time.time - monsterPressed < 5f || EnemyDirector.instance == null)
+                return;
+            doorsLook = 0.5f;
+            Vector3 landing = docks[atDock].Landing;
+            foreach (EnemyParent parent in EnemyDirector.instance.enemiesSpawned)
+            {
+                if (parent == null || !parent.Spawned || parent.Enemy == null)
+                    continue;
+                Vector3 at = parent.Enemy.transform.position;
+                if (Mathf.Abs(at.y - landing.y) > 3f || Vector3.Distance(at, landing) > 3.5f)
+                    continue;
+                monsterPressed = Time.time;
+                foreach (LiftButton b in Object.FindObjectsOfType<LiftButton>())
+                {
+                    if (b.Kind == ButtonKind.Call && b.Dock == atDock && b.Attached)
+                    {
+                        Press(b);
+                        break;
+                    }
+                }
+                ElevatorsNet.SendDoors(OpenHoldTime);
+                Plugin.LogInfo($"[Elevator] {parent.enemyName} opened the doors at {docks[atDock].Name}");
+                return;
+            }
+        }
+
         private static bool DoorwayBlocked()
         {
             if (car == null)

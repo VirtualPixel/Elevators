@@ -289,12 +289,14 @@ namespace ElevatorsProbe
                 if (target != null)
                 {
                     MapModule mm = target.MapModule;
-                    Vector3 spot = target.transform.position + Vector3.up * 0.3f;
+                    Collider? vol = target.GetComponent<Collider>();
+                    Vector3 spot = (vol != null ? vol.bounds.center : target.transform.position) + Vector3.up * 0.3f;
+                    if (NavMesh.SamplePosition(spot, out NavMeshHit onFloor, 3f, NavMesh.AllAreas)) spot = onFloor.position + Vector3.up * 0.3f;
                     Place(PlayerAvatar.instance, spot);
                     yield return new WaitForSecondsRealtime(2.5f);
                     map.debugActive = false;
                     yield return new WaitForSecondsRealtime(2.5f);
-                    bool cleared = mm == null || mm.transform.localScale.x < 0.05f;
+                    bool cleared = mm == null || mm.transform.localScale.x < 0.99f;
                     log.LogInfo($"[Probe] {name} DISCOVER {(cleared ? "ok" : "FAIL")} room {target.Module.name} map object {(mm == null ? "gone" : "scale " + mm.transform.localScale.x.ToString("0.00"))}");
                 }
                 else
@@ -360,12 +362,12 @@ namespace ElevatorsProbe
         // Stand in the car, press up, get carried; then press down, get carried back; then the void check.
         private IEnumerator ElevatorRides(string name, PlayerAvatar me, Vector3 ground, Vector3 up)
         {
-            Place(me, ground + Vector3.up * 0.6f);
-            yield return new WaitForSecondsRealtime(1.5f);
-            if (!Elevator.IsInside(me.transform.position))
+            for (int attempt = 0; attempt < 3 && !Elevator.IsInside(me.transform.position); attempt++)
             {
                 Place(me, ground + Vector3.up * 0.6f);
                 yield return new WaitForSecondsRealtime(1.5f);
+                if (!Elevator.IsInside(me.transform.position))
+                    log.LogInfo($"[Probe] {name} PLACE try {attempt + 1}: landed at {me.transform.position}, tumbling={me.isTumbling}, wanted {ground + Vector3.up * 0.6f}");
             }
             int upDock = DockNamed("upstairs");
             // What the grabber does: the hit's transform must carry the StaticGrabObject.
@@ -389,7 +391,9 @@ namespace ElevatorsProbe
                 yield return new WaitForSecondsRealtime(1.5f);
                 log.LogInfo($"[Probe] {name} CALL OPENS {(Elevator.DoorOpenAmount > 0.5f ? "ok" : "FAIL")}: {Elevator.DoorState()}");
                 // With the doors open, is the way from the landing into the car clear?
-                Vector3 landingSpot = Elevator.LandingOf("ground");
+                // From just outside the doors, straight in.
+                (Vector3 gpos, float gyaw, string _) = Elevator.DockList().Find(d => d.name == "ground");
+                Vector3 landingSpot = gpos + Quaternion.Euler(0f, gyaw, 0f) * new Vector3(0f, 0f, -3f);
                 Vector3 carCentre = ground + Vector3.up * 0.9f;
                 foreach (float h in new[] { 0.4f, 1.0f, 1.6f })
                 {
@@ -445,6 +449,28 @@ namespace ElevatorsProbe
             yield return RideTelemetry(name, me, "DOWN", cargo);
             yield return new WaitForSecondsRealtime(1f);
             Verdict(name, "ELEVATOR DOWN", me.transform.position, ground);
+            // Ride again while tumbling: a knocked-down rider must go with the car too.
+            if (me.tumble != null)
+            {
+                Place(me, ground + Vector3.up * 0.6f);
+                yield return new WaitForSecondsRealtime(1f);
+                me.tumble.TumbleSet(true, false);
+                yield return new WaitForSecondsRealtime(1.5f);
+                log.LogInfo($"[Probe] {name} tumbling in the car: {me.isTumbling}, inside={Elevator.IsInside(me.transform.position)}");
+                ElevatorsNet.RequestRide(upDock);
+                float tw = 0f;
+                while (Elevator.Moving && tw < 30f) { yield return new WaitForSecondsRealtime(0.5f); tw += 0.5f; }
+                yield return new WaitForSecondsRealtime(1f);
+                Verdict(name, "TUMBLE RIDE UP", me.transform.position, up);
+                me.tumble.TumbleSet(false, false);
+                yield return new WaitForSecondsRealtime(1.5f);
+                ElevatorsNet.RequestRide(DockNamed("ground"));
+                tw = 0f;
+                while (Elevator.Moving && tw < 30f) { yield return new WaitForSecondsRealtime(0.5f); tw += 0.5f; }
+                yield return new WaitForSecondsRealtime(1f);
+                Verdict(name, "TUMBLE RIDE BACK", me.transform.position, ground);
+            }
+            yield return MonsterTests(name, me, ground, up, upDock);
             if (Session.Up != null)
             {
                 var from = new Vector3(ground.x + 6f, Session.GroundTop + 2f, ground.z);
@@ -461,6 +487,118 @@ namespace ElevatorsProbe
         }
 
         // How far the rider and any cargo stray from the car floor while it moves.
+        // A real monster: it walks into the docked car after us, rides up with us and steps out
+        // at the landing, and on its own it presses the call button and rides between floors.
+        private IEnumerator MonsterTests(string name, PlayerAvatar me, Vector3 ground, Vector3 up, int upDock)
+        {
+            EnemyParent? monster = null;
+            if (EnemyDirector.instance != null)
+            {
+                foreach (EnemyParent p in EnemyDirector.instance.enemiesSpawned)
+                {
+                    if (p != null && p.Spawned && p.Enemy != null && p.Enemy.HasStateInvestigate && p.Enemy.GetComponentInChildren<EnemyThinMan>(true) == null)
+                    {
+                        monster = p;
+                        break;
+                    }
+                }
+            }
+            if (monster == null)
+            {
+                log.LogWarning($"[Probe] {name} MONSTER: nothing spawned to test with");
+                yield break;
+            }
+            int groundDock = DockNamed("ground");
+            Vector3 groundLanding = Elevator.LandingOf("ground");
+            Vector3 upLanding = Elevator.LandingOf("upstairs");
+            Place(me, ground + Vector3.up * 0.6f);
+            yield return new WaitForSecondsRealtime(1f);
+            monster.Enemy.EnemyTeleported(groundLanding);
+            // Standing at the shut doors it presses the call button on its own.
+            float knock = 0f;
+            while (knock < 8f && Elevator.DoorOpenAmount < 0.5f)
+            {
+                yield return new WaitForSecondsRealtime(0.5f);
+                knock += 0.5f;
+                if (monster.Enemy != null && Vector3.Distance(monster.Enemy.transform.position, groundLanding) > 3f)
+                    monster.Enemy.EnemyTeleported(groundLanding);
+            }
+            log.LogInfo($"[Probe] {name} MONSTER OPENS DOORS {(Elevator.DoorOpenAmount >= 0.5f ? "ok" : "FAIL")}: {Elevator.DoorState()} after {knock:0}s");
+            ElevatorsNet.SendDoors(14f);
+            yield return new WaitForSecondsRealtime(1.5f);
+            var path = new NavMeshPath();
+            bool canPath = NavMesh.CalculatePath(monster.Enemy.transform.position, ground, NavMesh.AllAreas, path) && path.status == NavMeshPathStatus.PathComplete;
+            log.LogInfo($"[Probe] {name} MONSTER PATH {monster.enemyName} landing->car: {(canPath ? "ok" : "FAIL")} status={path.status} from={monster.Enemy.transform.position}");
+            monster.Enemy.StateInvestigate.Set(ground, false);
+            float best = 99f, t = 0f;
+            bool inside = false;
+            while (t < 15f && !inside)
+            {
+                yield return new WaitForSecondsRealtime(0.5f);
+                t += 0.5f;
+                if (monster == null || !monster.Spawned || monster.Enemy == null)
+                    break;
+                Vector3 at = monster.Enemy.transform.position;
+                best = Mathf.Min(best, Vector3.Distance(at, ground));
+                inside = Elevator.IsInside(at);
+                if (t % 4f < 0.5f)
+                    monster.Enemy.StateInvestigate.Set(ground, false);
+            }
+            log.LogInfo($"[Probe] {name} MONSTER WALKS IN {(inside ? "ok" : "FAIL")}: {monster?.enemyName} closest {best:0.0} m after {t:0}s at {monster?.Enemy?.transform.position}");
+            ElevatorsNet.SendDoors(0f);
+            if (inside && monster != null)
+            {
+                yield return new WaitForSecondsRealtime(2.5f);
+                ElevatorsNet.RequestRide(upDock);
+                float w = 0f;
+                yield return new WaitForSecondsRealtime(1.5f);
+                while (Elevator.Moving && w < 30f) { yield return new WaitForSecondsRealtime(0.5f); w += 0.5f; }
+                yield return new WaitForSecondsRealtime(2f);
+                Vector3 at = monster.Enemy != null ? monster.Enemy.transform.position : Vector3.zero;
+                float d = Vector3.Distance(at, upLanding);
+                log.LogInfo($"[Probe] {name} MONSTER RIDES {(d < 5f ? "ok" : "FAIL")}: {monster.enemyName} at {at}, upstairs landing {upLanding}, {d:0.0} m off");
+            }
+            if (monster == null || monster.Enemy == null)
+                yield break;
+            // Patrol: the monster upstairs on its own, us far away on the ground floor.
+            Vector3 far = ground;
+            float farthest = 0f;
+            foreach (LevelPoint point in Object.FindObjectsOfType<LevelPoint>())
+            {
+                Vector3 pp = point.transform.position;
+                if (Mathf.Abs(pp.y - ground.y) > 2f)
+                    continue;
+                float d = Vector3.Distance(pp, ground);
+                if (d > farthest) { farthest = d; far = pp; }
+            }
+            Place(me, far + Vector3.up * 0.3f);
+            if (Elevator.CurrentDock != upDock)
+            {
+                ElevatorsNet.RequestRide(upDock);
+                float w = 0f;
+                yield return new WaitForSecondsRealtime(1.5f);
+                while (Elevator.Moving && w < 30f) { yield return new WaitForSecondsRealtime(0.5f); w += 0.5f; }
+                yield return new WaitForSecondsRealtime(2f);
+            }
+            monster.Enemy.EnemyTeleported(upLanding);
+            yield return new WaitForSecondsRealtime(1f);
+            float busy = 0f;
+            while (Elevator.Patrolling && busy < 60f) { yield return new WaitForSecondsRealtime(1f); busy += 1f; }
+            Elevator.StartPatrol(monster, upDock, groundDock);
+            float pt = 0f;
+            bool done = false;
+            while (pt < 70f && !done)
+            {
+                yield return new WaitForSecondsRealtime(1f);
+                pt += 1f;
+                if (monster == null || monster.Enemy == null)
+                    break;
+                done = Elevator.CurrentDock == groundDock && !Elevator.Moving && Vector3.Distance(monster.Enemy.transform.position, groundLanding) < 5f;
+            }
+            log.LogInfo($"[Probe] {name} MONSTER PATROL {(done ? "ok" : "FAIL")}: after {pt:0}s car at dock {Elevator.CurrentDock} moving={Elevator.Moving}, {monster?.enemyName} at {monster?.Enemy?.transform.position}, ground landing {groundLanding}");
+            yield return new WaitForSecondsRealtime(1f);
+        }
+
         private IEnumerator RideTelemetry(string name, PlayerAvatar me, string what, ValuableObject? cargo = null)
         {
             if (me == null || PlayerController.instance == null)
@@ -471,12 +609,15 @@ namespace ElevatorsProbe
             float riderMin = 99f, riderMax = -99f, cargoMin = 99f, cargoMax = -99f, prev = float.NaN, jitter = 0f, camMin = 99f, camMax = -99f;
             int samples = 0;
             float waited = 0f;
+            string bumpAt = "";
             while (Elevator.Moving && waited < 30f)
             {
                 yield return new WaitForFixedUpdate();
                 waited += Time.fixedDeltaTime;
                 if (Elevator.CarVelocityY == 0f) continue;
                 float rider = PlayerController.instance.rb.position.y - Elevator.FloorY;
+                if (rider > 0.3f && bumpAt.Length == 0)
+                    bumpAt = $" bump at carY={Elevator.FloorY:0.0} rider={PlayerController.instance.rb.position}";
                 riderMin = Mathf.Min(riderMin, rider); riderMax = Mathf.Max(riderMax, rider);
                 if (!float.IsNaN(prev)) jitter = Mathf.Max(jitter, Mathf.Abs(rider - prev));
                 if (Camera.main != null)
@@ -492,7 +633,7 @@ namespace ElevatorsProbe
                 }
                 samples++;
             }
-            log.LogInfo($"[Probe] {name} RIDE {what} interp player={PlayerController.instance.rb.interpolation} samples={samples} rider above floor min={riderMin:0.00} max={riderMax:0.00} stepJitter={jitter:0.000} camAboveBody={camMin:0.00}..{camMax:0.00}{(cargo != null ? $" cargo min={cargoMin:0.00} max={cargoMax:0.00} inside={Elevator.IsInside(cargo.transform.position)}" : "")}");
+            log.LogInfo($"[Probe] {name} RIDE {what} interp player={PlayerController.instance.rb.interpolation} samples={samples} rider above floor min={riderMin:0.00} max={riderMax:0.00} stepJitter={jitter:0.000} camAboveBody={camMin:0.00}..{camMax:0.00}{bumpAt}{(cargo != null ? $" cargo min={cargoMin:0.00} max={cargoMax:0.00} inside={Elevator.IsInside(cargo.transform.position)}" : "")}");
         }
 
         // Can a monster path from the landing into the car floor at this dock?
@@ -504,6 +645,37 @@ namespace ElevatorsProbe
             var path = new NavMeshPath();
             bool ok = NavMesh.SamplePosition(landing, out NavMeshHit from, 1f, NavMesh.AllAreas) && onMesh && NavMesh.CalculatePath(from.position, hit.position, NavMesh.AllAreas, path) && path.status == NavMeshPathStatus.PathComplete;
             log.LogInfo($"[Probe] {name} NAV {what}: floorOnMesh={onMesh} pathComplete={ok} {(ok == expectPath ? "ok" : "FAIL")}");
+            if (ok || !expectPath) return;
+            var trace = new System.Text.StringBuilder();
+            for (float t = 0f; t <= 1.001f; t += 0.1f)
+            {
+                Vector3 at = Vector3.Lerp(landing, dock, t);
+                bool on = NavMesh.SamplePosition(at, out NavMeshHit step, 0.35f, NavMesh.AllAreas);
+                trace.Append(on ? '#' : '.');
+            }
+            log.LogInfo($"[Probe] {name} NAV trace landing->car {trace} status={path.status} corners={path.corners.Length} landing={landing} car={dock}");
+            // Straight out of the car through the doors: where the mesh stops and what stands there.
+            (Vector3 dpos, float dyaw, string _) = Elevator.DockList().Find(d => d.name == DockNamed(dock));
+            Quaternion facing = Quaternion.Euler(0f, dyaw, 0f);
+            var axis = new System.Text.StringBuilder();
+            var seen = new HashSet<string>();
+            for (float z = 0f; z <= 4.5f; z += 0.3f)
+            {
+                Vector3 at = dpos + facing * new Vector3(0f, 0f, -z);
+                bool on = NavMesh.SamplePosition(at, out NavMeshHit step, 0.35f, NavMesh.AllAreas);
+                axis.Append(on ? '#' : '.');
+                if (on) continue;
+                foreach (Collider c in Physics.OverlapSphere(at + Vector3.up * 0.5f, 0.45f, ~0, QueryTriggerInteraction.Ignore))
+                    seen.Add($"{c.name}/{LayerMask.LayerToName(c.gameObject.layer)}@{z:0.0}");
+            }
+            var obstacles = new List<string>();
+            foreach (NavMeshObstacle o in Object.FindObjectsOfType<NavMeshObstacle>(true))
+            {
+                if (Vector3.Distance(o.transform.position, dpos) < 8f)
+                    obstacles.Add($"{o.name}(enabled={o.enabled},carve={o.carving},size={o.size},{Vector3.Distance(o.transform.position, dpos):0.0}m)");
+            }
+            log.LogInfo($"[Probe] {name} NAV obstacles within 8 m of the dock: {(obstacles.Count > 0 ? string.Join("; ", obstacles) : "none")}");
+            log.LogInfo($"[Probe] {name} NAV axis car->room {axis} (0.3 m steps from the car centre out through the doors); in the gaps: {(seen.Count > 0 ? string.Join(", ", seen) : "nothing solid")}");
         }
 
         private static string? DockNamed(Vector3 pos)

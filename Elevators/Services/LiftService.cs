@@ -548,16 +548,23 @@ namespace Elevators.Services
             return found;
         }
 
+        // The nearest point on the same floor as the spot; a point on another storey of the module
+        // (the Museum's sub floor sits right under its shaft) only counts when the floor has none.
         private static bool NearestPoint(Module module, Vector3 near, out Vector3 spot)
         {
             spot = Vector3.zero;
             float best = float.MaxValue;
+            bool bestOnFloor = false;
             foreach (LevelPoint point in module.GetComponentsInChildren<LevelPoint>())
             {
+                bool onFloor = Mathf.Abs(point.transform.position.y - near.y) < 2f;
+                if (bestOnFloor && !onFloor)
+                    continue;
                 float d = Flat(point.transform.position, near);
-                if (d < best)
+                if (d < best || (onFloor && !bestOnFloor))
                 {
                     best = d;
+                    bestOnFloor = onFloor;
                     spot = point.transform.position;
                 }
             }
