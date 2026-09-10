@@ -1059,6 +1059,8 @@ namespace Upstairs.Services
             travelLength = Vector3.Distance(travelFrom, travelTo);
             travelT = 0f;
             doorWait = DoorTime;
+            // A press inside the landing pause must not let that pause open the doors mid-trip.
+            landWait = 0f;
             doorsHeld = true;
             toDock = to;
             atDock = -1;
@@ -1133,9 +1135,10 @@ namespace Upstairs.Services
             if (car == null || body == null || !Moving)
                 return;
             Vector3 before = body.position;
-            if (doorWait > 0f)
+            if (doorWait > 0f || doorOpen > 0f)
             {
-                // Doors still closing: whoever steps in now rides too.
+                // Doors still closing: whoever steps in now rides too. The car never leaves
+                // with a gap in them.
                 doorWait -= dt;
                 localRiding = localRiding || LocalInside();
                 CarVelocityY = 0f;
