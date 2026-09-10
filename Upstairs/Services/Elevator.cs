@@ -862,12 +862,15 @@ namespace Upstairs.Services
                 return;
             Vector3 pos = pc.rb.position + delta;
             Vector3 vel = pc.rb.velocity;
-            // Only catch feet that are on or through the floor and coming down; a jump is left to gravity.
-            bool landing = vel.y <= carVelY + 0.05f && pos.y - floorY < 0.12f;
-            if (landing)
+            // The controller zeroes your fall whenever it believes it is grounded, so on the way
+            // down you would hover above a floor that keeps leaving. Anyone within a step of the
+            // floor who is not actually jumping upward gets pinned to it.
+            bool jumping = vel.y > Mathf.Max(0.5f, carVelY + 0.5f);
+            float above = pos.y - floorY;
+            if (!jumping && above < 0.6f)
             {
                 pos.y = floorY + 0.02f;
-                vel.y = carVelY;
+                vel.y = Mathf.Min(vel.y, carVelY);
                 pc.rb.velocity = vel;
             }
             pc.rb.position = pos;
