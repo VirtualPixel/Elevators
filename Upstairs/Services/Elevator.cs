@@ -26,6 +26,12 @@ namespace Upstairs.Services
             Down
         }
 
+        // Drives the car from FixedUpdate so the player standing in it is moved in physics time.
+        internal sealed class ElevatorBody : MonoBehaviour
+        {
+            private void FixedUpdate() => Step(Time.fixedDeltaTime);
+        }
+
         // A pressable thing. Carries which dock it calls the car to, or which way to go from inside.
         internal sealed class LiftButton : MonoBehaviour
         {
@@ -70,6 +76,7 @@ namespace Upstairs.Services
         private static Vector3 lastCarPos;
         private static bool localRiding;
         private static AudioSource? hum;
+        private static Rigidbody? body;
 
         public static bool Built => car != null;
         public static bool Moving => toDock >= 0;
@@ -170,13 +177,21 @@ namespace Upstairs.Services
             AddButton(body.transform, new Vector3(1.05f, -0.95f, -0.85f), Quaternion.Euler(0f, -90f, 0f), ButtonKind.Down, -1);
 
             holder.transform.SetPositionAndRotation(dock.Position + Vector3.up * FloorOffset, Quaternion.Euler(0f, dock.Yaw, 0f));
+            Rigidbody rb = holder.AddComponent<Rigidbody>();
+            rb.isKinematic = true;
+            rb.interpolation = RigidbodyInterpolation.Interpolate;
+            rb.collisionDetectionMode = CollisionDetectionMode.Discrete;
+            holder.AddComponent<ElevatorBody>();
             holder.SetActive(true);
             car = body;
+            Elevator.body = rb;
             lastCarPos = holder.transform.position;
             doorL = body.transform.Find("Museum Elevator door (1)");
             doorR = body.transform.Find("Museum Elevator door");
-            if (doorL != null) closedL = doorL.localPosition;
-            if (doorR != null) closedR = doorR.localPosition;
+            if (doorL != null) closedL = ClosedAt(doorL, left: true);
+            if (doorR != null) closedR = ClosedAt(doorR, left: false);
+            if (doorL != null) doorL.localPosition = closedL;
+            if (doorR != null) doorR.localPosition = closedR;
             doorOpen = 0f;
         }
 
@@ -214,8 +229,8 @@ namespace Upstairs.Services
                 landing.transform.SetPositionAndRotation(dock.Position + Vector3.up * FloorOffset, Quaternion.Euler(0f, dock.Yaw, 0f));
                 dock.LandingL = CopyDoor(carriage, "Museum Elevator door (1)", landing.transform);
                 dock.LandingR = CopyDoor(carriage, "Museum Elevator door", landing.transform);
-                if (dock.LandingL != null) dock.LandingClosedL = dock.LandingL.localPosition;
-                if (dock.LandingR != null) dock.LandingClosedR = dock.LandingR.localPosition;
+                if (dock.LandingL != null) { dock.LandingClosedL = ClosedAt(dock.LandingL, left: true) + Vector3.back * 0.18f; dock.LandingL.localPosition = dock.LandingClosedL; }
+                if (dock.LandingR != null) { dock.LandingClosedR = ClosedAt(dock.LandingR, left: false) + Vector3.back * 0.18f; dock.LandingR.localPosition = dock.LandingClosedR; }
                 carriage.gameObject.SetActive(false);
                 Plugin.LogInfo($"[Elevator] {dock.Name} dock is inside the room's own shaft");
                 return;
@@ -232,6 +247,24 @@ namespace Upstairs.Services
             copy.transform.localRotation = door.localRotation;
             copy.transform.localPosition = door.localPosition + Vector3.back * 0.18f;
             return copy.transform;
+        }
+
+        // The prefab parks its doors ajar. Shut means the two inner edges meet in the middle, so the
+        // closed spot comes from the door mesh's own width.
+        private static Vector3 ClosedAt(Transform door, bool left)
+        {
+            Vector3 at = door.localPosition;
+            MeshFilter filter = door.GetComponent<MeshFilter>();
+            if (filter == null || filter.sharedMesh == null)
+            {
+                at.x = left ? -0.62f : 0.62f;
+                return at;
+            }
+            Bounds b = filter.sharedMesh.bounds;
+            float scale = door.localScale.x;
+            float inner = left ? b.center.x + b.extents.x : b.center.x - b.extents.x;
+            at.x = -inner * scale;
+            return at;
         }
 
         private static void BuildCallButton(int index)
@@ -352,7 +385,10 @@ namespace Upstairs.Services
                 return;
             Transform root = car.transform.parent;
             if (!Moving)
+            {
                 root.position = docks[from].Position + Vector3.up * FloorOffset;
+                if (body != null) body.position = root.position;
+            }
             travelFrom = root.position;
             travelTo = docks[to].Position + Vector3.up * FloorOffset;
             travelLength = Vector3.Distance(travelFrom, travelTo);
@@ -375,38 +411,8 @@ namespace Upstairs.Services
                 return;
             Transform root = car.transform.parent;
 
-            if (Moving)
-            {
-                if (doorWait > 0f)
-                {
-                    doorWait -= dt;
-                }
-                else
-                {
-                    // Ease in and out over the trip, capped so a short hop still feels like a lift.
-                    float duration = Mathf.Max(1.5f, travelLength / Speed);
-                    travelT = Mathf.Min(1f, travelT + dt / duration);
-                    float eased = travelT * travelT * (3f - 2f * travelT);
-                    root.position = Vector3.Lerp(travelFrom, travelTo, eased);
-                    if (travelT >= 1f)
-                    {
-                        atDock = toDock;
-                        toDock = -1;
-                        doorsHeld = false;
-                        if (hum != null)
-                            hum.Stop();
-                        Play(sounds?.soundActivate3, root.position);
-                    }
-                }
-                Vector3 delta = root.position - lastCarPos;
-                if (localRiding && delta.sqrMagnitude > 0f)
-                    Carry(delta);
-                lastCarPos = root.position;
-            }
-            else
-            {
+            if (!Moving)
                 localRiding = false;
-            }
 
             float target = doorsHeld ? 0f : (AnyoneNear(root.position) ? 1f : 0f);
             float open = Mathf.MoveTowards(doorOpen, target, dt * 2f);
@@ -435,6 +441,38 @@ namespace Upstairs.Services
             }
         }
 
+        // Physics step: move the car, and move the rider with it. Feet stay on the car floor unless
+        // they are on their way up from a jump.
+        private static void Step(float dt)
+        {
+            if (car == null || body == null || !Moving)
+                return;
+            Vector3 before = body.position;
+            if (doorWait > 0f)
+            {
+                doorWait -= dt;
+                return;
+            }
+            float duration = Mathf.Max(1.5f, travelLength / Speed);
+            travelT = Mathf.Min(1f, travelT + dt / duration);
+            float eased = travelT * travelT * (3f - 2f * travelT);
+            Vector3 next = Vector3.Lerp(travelFrom, travelTo, eased);
+            body.MovePosition(next);
+            Vector3 delta = next - before;
+            if (localRiding)
+                Carry(delta, next.y - FloorOffset, delta.y / dt);
+            lastCarPos = next;
+            if (travelT >= 1f)
+            {
+                atDock = toDock;
+                toDock = -1;
+                doorsHeld = false;
+                if (hum != null)
+                    hum.Stop();
+                Play(sounds?.soundActivate3, next);
+            }
+        }
+
         private static bool AnyoneNear(Vector3 carPos)
         {
             foreach (PlayerAvatar player in SemiFunc.PlayerGetAll())
@@ -454,7 +492,7 @@ namespace Upstairs.Services
             if (car == null)
                 return false;
             Vector3 local = car.transform.parent.InverseTransformPoint(pos);
-            return Mathf.Abs(local.x) < 1.3f && Mathf.Abs(local.z) < 1.3f && local.y > -FloorOffset - 0.6f && local.y < 2f;
+            return Mathf.Abs(local.x) < 1.3f && Mathf.Abs(local.z) < 1.3f && local.y > -FloorOffset - 0.6f && local.y < 2.5f;
         }
 
         private static bool LocalInside()
@@ -463,19 +501,22 @@ namespace Upstairs.Services
             return me != null && IsInside(me.transform.position);
         }
 
-        private static void Carry(Vector3 delta)
+        private static void Carry(Vector3 delta, float floorY, float carVelY)
         {
             PlayerController pc = PlayerController.instance;
             if (pc == null || pc.rb == null)
                 return;
-            pc.rb.position += delta;
-            pc.transform.position += delta;
-            if (delta.y > 0f)
+            Vector3 pos = pc.rb.position + delta;
+            Vector3 vel = pc.rb.velocity;
+            bool jumping = vel.y > carVelY + 0.6f;
+            if (!jumping && pos.y - floorY < 0.45f)
             {
-                Vector3 v = pc.rb.velocity;
-                if (v.y < 0f) v.y = 0f;
-                pc.rb.velocity = v;
+                pos.y = floorY + 0.02f;
+                vel.y = carVelY;
+                pc.rb.velocity = vel;
             }
+            pc.rb.position = pos;
+            pc.transform.position = pos;
         }
 
         // The local player's grab key on a button they are looking at.
