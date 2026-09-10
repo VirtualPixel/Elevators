@@ -22,6 +22,7 @@ namespace Upstairs.Services
         private sealed class Pad
         {
             public Vector3 Position;
+            public float Yaw;
             public string Name = "";
             public Pad? Up;
             public Pad? Down;
@@ -83,6 +84,7 @@ namespace Upstairs.Services
             pads.Clear();
             riders.Clear();
             groundPad = null;
+            LiftCars.Clear();
         }
 
         public void Setup()
@@ -120,10 +122,54 @@ namespace Upstairs.Services
             active = pads.Count > 1;
             foreach (Pad pad in pads)
                 Plugin.LogInfo($"[Lift] pad {pad.Name} at {pad.Position}");
+            if (!active)
+                return;
+            var payload = new LiftPayload
+            {
+                Nonce = Random.Range(1, int.MaxValue),
+                Level = LevelGenerator.Instance != null && LevelGenerator.Instance.Level != null ? LevelGenerator.Instance.Level.name : "",
+                GroundTop = Session.GroundTop,
+                GroundBottom = Session.GroundBottom,
+                HasUp = Session.Up != null,
+                HasDown = Session.Down != null
+            };
+            foreach (Pad pad in pads)
+                payload.Pads.Add(new LiftPayload.Pad { Name = pad.Name, X = pad.Position.x, Y = pad.Position.y, Z = pad.Position.z, Yaw = pad.Yaw });
+            UpstairsNet.Publish(payload);
+            BuildCars();
+        }
+
+        // A client taking the host's pads: cars and the HUD line, no ride logic.
+        public void ApplyRemote(LiftPayload payload)
+        {
+            Clear();
+            foreach (LiftPayload.Pad p in payload.Pads)
+                pads.Add(new Pad { Name = p.Name, Position = new Vector3(p.X, p.Y, p.Z), Yaw = p.Yaw });
+            Pad? ground = pads.Find(p => p.Name == "ground");
+            Pad? up = pads.Find(p => p.Name == "upstairs");
+            Pad? down = pads.Find(p => p.Name == "basement");
+            if (ground != null)
+            {
+                ground.Up = up;
+                ground.Down = down;
+                if (up != null) up.Down = ground;
+                if (down != null) down.Up = ground;
+            }
+            BuildCars();
+        }
+
+        private void BuildCars()
+        {
+            var spots = new List<(Vector3, float)>();
+            foreach (Pad pad in pads)
+                spots.Add((pad.Position, pad.Yaw));
+            LiftCars.Build(spots);
         }
 
         private void Update()
         {
+            if (SemiFunc.RunIsLevel())
+                LiftCars.Tick(Time.deltaTime);
             if (!active || !SemiFunc.IsMasterClientOrSingleplayer() || !SemiFunc.RunIsLevel())
                 return;
             if (GameDirector.instance == null || GameDirector.instance.currentState != GameDirector.gameState.Main)
@@ -162,7 +208,7 @@ namespace Upstairs.Services
                 {
                     Pad? dest = avatar.isCrouching ? (here.Down ?? here.Up) : (here.Up ?? here.Down);
                     if (dest != null)
-                        Ride(avatar, rider, dest, cooldown);
+                        Ride(avatar, rider, dest, cooldown, here);
                     continue;
                 }
 
@@ -182,14 +228,24 @@ namespace Upstairs.Services
             }
         }
 
-        private void Ride(PlayerAvatar avatar, Rider rider, Pad dest, float cooldown)
+        // A rider running the mod gets the elevator: doors, fade, and their own client moves them.
+        // Anyone else gets the game's void-rescue tumble, which needs nothing on their end.
+        private void Ride(PlayerAvatar avatar, Rider rider, Pad dest, float cooldown, Pad? from = null)
         {
-            PlayerTumble tumble = avatar.tumble;
-            tumble.TumbleSet(_isTumbling: true, _playerInput: false);
-            tumble.physGrabObject.Teleport(dest.Position + Vector3.up * 0.4f, avatar.transform.rotation);
-            tumble.physGrabObject.rb.velocity = Vector3.zero;
-            tumble.physGrabObject.rb.angularVelocity = Vector3.zero;
-            avatar.FallDamageResetSet(2f);
+            if (UpstairsNet.IsModded(avatar) && LiftCars.Count == pads.Count)
+            {
+                UpstairsNet.SendRide(UpstairsNet.ActorOf(avatar), from != null ? pads.IndexOf(from) : -1, pads.IndexOf(dest));
+                avatar.FallDamageResetSet(3f);
+            }
+            else
+            {
+                PlayerTumble tumble = avatar.tumble;
+                tumble.TumbleSet(_isTumbling: true, _playerInput: false);
+                tumble.physGrabObject.Teleport(dest.Position + Vector3.up * 0.4f, avatar.transform.rotation);
+                tumble.physGrabObject.rb.velocity = Vector3.zero;
+                tumble.physGrabObject.rb.angularVelocity = Vector3.zero;
+                avatar.FallDamageResetSet(2f);
+            }
             rider.CooldownUntil = Time.time + cooldown;
             rider.MustLeave = dest;
             rider.VoidTime = 0f;
@@ -299,7 +355,8 @@ namespace Upstairs.Services
                 spot = top;
             else if (!NearestPoint(module, module.transform.position, out spot))
                 return null;
-            return new Pad { Position = OnNavMesh(spot, 2f), Name = "ground" };
+            Vector3 at = OnNavMesh(spot, 2f);
+            return new Pad { Position = at, Name = "ground", Yaw = FacingAway(module.transform.position, at) };
         }
 
         private static Pad? FloorPad(Floor floor, Vector3 groundSpot)
@@ -310,7 +367,7 @@ namespace Upstairs.Services
             Vector3 center = module.transform.position;
             if (!NearestPoint(module, new Vector3(groundSpot.x, center.y, groundSpot.z), out Vector3 spot))
                 spot = OnNavMesh(center, 6f);
-            return new Pad { Position = spot, Name = floor.Name };
+            return new Pad { Position = spot, Name = floor.Name, Yaw = FacingAway(center, spot) };
         }
 
         private static bool HighestPoint(Module module, out Vector3 spot)
@@ -342,6 +399,14 @@ namespace Upstairs.Services
                 }
             }
             return best < float.MaxValue;
+        }
+
+        // The car's doors are on its back, so a car turned away from the room opens toward it.
+        private static float FacingAway(Vector3 center, Vector3 spot)
+        {
+            Vector3 d = spot - center;
+            d.y = 0f;
+            return d.sqrMagnitude < 0.01f ? 0f : Quaternion.LookRotation(d).eulerAngles.y;
         }
 
         private static Vector3 OnNavMesh(Vector3 spot, float reach)

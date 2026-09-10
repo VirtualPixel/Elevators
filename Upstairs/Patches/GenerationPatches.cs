@@ -7,7 +7,12 @@ namespace Upstairs.Patches
     [HarmonyPatch(typeof(LevelGenerator), "Start")]
     internal static class LevelStartPatch
     {
-        private static void Prefix() => Session.Reset();
+        private static void Prefix()
+        {
+            Session.Reset();
+            LiftService.Instance?.Clear();
+            UpstairsNet.ResetApplied();
+        }
     }
 
     // The grid is final once the game starts placing rooms, so the plan is drawn here.
@@ -79,9 +84,12 @@ namespace Upstairs.Patches
     {
         private static void Postfix(LevelGenerator __instance)
         {
-            if (!__instance.Generated || !Session.Active)
+            if (!__instance.Generated)
                 return;
-            LiftService.Instance?.Setup();
+            if (Session.Active)
+                LiftService.Instance?.Setup();
+            else
+                UpstairsNet.TryApply();
         }
     }
 }

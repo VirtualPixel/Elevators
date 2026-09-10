@@ -19,6 +19,7 @@
     <Compile Include="../Upstairs/Services/FloorGap.cs" Link="Services/FloorGap.cs" />
     <Compile Include="../Upstairs/Services/LiftSites.cs" Link="Services/LiftSites.cs" />
     <Compile Include="../Upstairs/Services/RoomFilter.cs" Link="Services/RoomFilter.cs" />
+    <Compile Include="../Upstairs/Services/LiftPayload.cs" Link="Services/LiftPayload.cs" />
   </ItemGroup>
 
 </Project>

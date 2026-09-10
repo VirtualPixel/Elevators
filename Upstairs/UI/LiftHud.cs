@@ -55,7 +55,7 @@ namespace Upstairs.UI
 
         private static string CurrentLine()
         {
-            if (!PluginConfig.ShowLiftHint.Value || !Session.Active || !SemiFunc.RunIsLevel())
+            if (!PluginConfig.ShowLiftHint.Value || !SemiFunc.RunIsLevel())
                 return string.Empty;
             if (GameDirector.instance == null || GameDirector.instance.currentState != GameDirector.gameState.Main)
                 return string.Empty;

@@ -2,19 +2,21 @@
 
 Every level gets another floor. Same rooms the level already uses, same doors, same loot spots, stacked on top of the ground floor with a lift between them. Optional basement too.
 
-**Host only. Nobody else in the lobby needs it.** The new floor is built through the same calls the game itself uses to place rooms, so every client, modded or not, sees the whole thing.
+**Everyone installs it.** The host runs the floors; the new rooms are placed through the same calls the game uses for its own, so even someone without the mod sees them. The elevator is the part that needs the mod on your machine: the car, the doors, the fade, and the HUD line that points you at it.
 
-## The lift
+## The elevator
 
-Once the level loads, a line at the bottom of the host's HUD points at the nearest lift pad with the distance and direction. Stand on it and you get tumbled up to the floor above, the same way the game pulls you out of the void. The pad on the new floor takes you back down. With a basement on, crouch on the pad to go down instead.
+The game's own elevator car, the one from the Museum, stands on each floor. A line at the bottom of the HUD points at the nearest one with the distance. Walk up and the doors slide open. Step in and stand still: doors shut, the screen goes dark for a moment, and you step out on the floor above. With a basement on, crouch in the car to go down instead.
 
-Where the lift lands:
+Anyone in the lobby without the mod still gets moved: they stand on the same spot and the host tumbles them up, the way the game pulls a player out of the void. They just do not see the car.
+
+Where the elevator stands:
 
 - Museum: in the corridor beside the elevator shaft.
 - Manor: at the top of the long stairs.
 - Arctic: the top of the stair corridor.
 - Wizard: up in the upstairs classroom.
-- Anything else (modded levels included): a plain room. The HUD line still points at it.
+- Anything else (modded levels included): a plain room. The HUD line still points at it, and the car is the tell.
 
 The game does not always roll those rooms, and when it does not you get the plain room fallback.
 
@@ -40,14 +42,14 @@ The game does not always roll those rooms, and when it does not you get the plai
 | EnemiesOnNewFloors | `false` | Let monsters up there |
 | AvoidRooms | `Bottomless,Outside` | Rooms with these words in their name never get picked for a new floor |
 | LiftCooldown | `4` | Seconds before the same player can ride again |
-| ShowLiftHint | `true` | HUD line pointing the host at the nearest lift pad |
-| VoidRescue | `true` | Anyone stuck outside every room for a couple of seconds gets lifted back to the ground pad |
+| ShowLiftHint | `true` | HUD line pointing you at the nearest elevator |
+| VoidRescue | `true` | Anyone stuck outside every room for a few seconds gets brought back to the ground elevator |
 | LogLevel | `Off` | Debug logs the plan, the pads and every ride |
 
 ## Known rough edges
 
-- The map shows the floor you are on. Players without the mod get the game's own map, which draws every room outline on one layer, so on their map the floors overlap once explored.
-- The lift is a spot, not a shaft. Players without the mod see no marker and no HUD line, so tell them where it is.
+- The map shows the floor you are on. Late joiners may see both floors' room outlines on one layer for that level.
+- The car sits on the floor with no shaft above it. The floors are 40 m apart, so the ride is a fade, not a climb.
 - The Museum elevator car stays stuck where the game left it. The lift pad is in the corridor at the shaft mouth, not inside the car.
 - Levels from other mods work as long as they use the game's normal room lists.
 

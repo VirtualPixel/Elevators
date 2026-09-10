@@ -2,7 +2,7 @@
   "name": "Upstairs",
   "version_number": "1.0.0",
   "website_url": "https://thunderstore.io/c/repo/p/Vippy/",
-  "description": "HOST ONLY. Every level gets another floor built from its own rooms, with a lift up to it. Optional basement, extra loot upstairs, monsters stay downstairs. Nobody else needs the mod.",
+  "description": "Every level gets another floor built from its own rooms, with an elevator up to it. Optional basement, extra loot upstairs, monsters stay downstairs. Everyone installs it; the host runs the floors.",
   "dependencies": [
     "BepInEx-BepInExPack-5.4.2305"
   ]

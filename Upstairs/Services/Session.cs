@@ -21,6 +21,10 @@ namespace Upstairs.Services
         public static float GroundTop { get; private set; }
         public static float GroundBottom { get; private set; }
         public static string Hint { get; private set; } = "";
+        // What a client knows from the host's room property.
+        private static bool remoteUp;
+        private static bool remoteDown;
+        public static bool KnowsFloors => Active || remoteUp || remoteDown;
 
         // Set just before the game's PickModule runs for the lift cell, consumed by it.
         public static PrefabRef? Override;
@@ -43,7 +47,17 @@ namespace Upstairs.Services
             Hint = "";
             GroundTop = 0f;
             GroundBottom = 0f;
+            remoteUp = false;
+            remoteDown = false;
             LootPass.Reset();
+        }
+
+        public static void ApplyRemote(LiftPayload payload)
+        {
+            GroundTop = payload.GroundTop;
+            GroundBottom = payload.GroundBottom;
+            remoteUp = payload.HasUp;
+            remoteDown = payload.HasDown;
         }
 
         public static bool ShouldRun(LevelGenerator lg)
@@ -61,7 +75,7 @@ namespace Upstairs.Services
 
         public static bool IsOnNewFloor(float y)
         {
-            return (Up != null && y > GroundTop) || (Down != null && y < GroundBottom);
+            return ((Up != null || remoteUp) && y > GroundTop) || ((Down != null || remoteDown) && y < GroundBottom);
         }
 
         // Runs when the game is about to place the ground floor rooms, so the grid is final.

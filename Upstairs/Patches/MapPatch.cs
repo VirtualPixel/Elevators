@@ -15,7 +15,7 @@ namespace Upstairs.Patches
         private static void Prefix(Map __instance, Vector3 _position)
         {
             saved = null;
-            if (!Session.Active || !Session.IsOnNewFloor(_position.y))
+            if (!Session.KnowsFloors || !Session.IsOnNewFloor(_position.y))
                 return;
             saved = __instance.OverLayerParent;
             __instance.OverLayerParent = __instance.GetLayerParent(_position.y).transform;
