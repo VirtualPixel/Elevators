@@ -10,4 +10,4 @@ First release.
 - The ground floor keeps its normal loot; the new floors get their own share on top. The quota grows with it like any other valuable.
 - Monsters keep to the ground floor unless you say otherwise.
 - The gap between floors is measured per level from the tallest and deepest rooms, so nothing pokes through. End up outside every room and the lift catches you.
-- Moon-phase style popup on load telling the host where the lift is, and a HUD line pointing at the nearest pad.
+- A HUD line for the host pointing at the nearest lift pad.

@@ -82,7 +82,6 @@ namespace Upstairs.Patches
             if (!__instance.Generated || !Session.Active)
                 return;
             LiftService.Instance?.Setup();
-            Announcer.Instance?.Trigger();
         }
     }
 }

@@ -19,7 +19,6 @@ namespace Upstairs.Configuration
         public static ConfigEntry<bool> EnemiesOnNewFloors = null!;
         public static ConfigEntry<string> AvoidRooms = null!;
         public static ConfigEntry<float> LiftCooldown = null!;
-        public static ConfigEntry<bool> Announce = null!;
         public static ConfigEntry<bool> VoidRescue = null!;
         public static ConfigEntry<bool> ShowLiftHint = null!;
         public static ConfigEntry<VerbosityLevel> LoggingLevel = null!;
@@ -61,10 +60,6 @@ namespace Upstairs.Configuration
 
             VoidRescue = config.Bind("Lift", "VoidRescue", true,
                 "A player who spends a couple of seconds outside every room, on a roof between floors say, gets lifted back to the ground pad.");
-
-            Announce = config.Bind("Lift", "Announce", true,
-                "Call out the new floor and where the lift is once the level loads, using the game's moon-phase popup. " +
-                "Only the host sees it, since only the host runs the mod.");
 
             LoggingLevel = config.Bind("General", "LogLevel", VerbosityLevel.Off,
                 "Off: key events only. Debug: floor plans, lift pads and rides. Verbose: every step.");

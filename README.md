@@ -6,7 +6,7 @@ Every level gets another floor. Same rooms the level already uses, same doors, s
 
 ## The lift
 
-Once the level loads the host gets a popup saying where the lift is, and a line at the bottom of the HUD keeps pointing at the nearest pad with the distance. Stand on it and you get tumbled up to the floor above, the same way the game pulls you out of the void. The pad on the new floor takes you back down. With a basement on, crouch on the pad to go down instead.
+Once the level loads, a line at the bottom of the host's HUD points at the nearest lift pad with the distance and direction. Stand on it and you get tumbled up to the floor above, the same way the game pulls you out of the void. The pad on the new floor takes you back down. With a basement on, crouch on the pad to go down instead.
 
 Where the lift lands:
 
@@ -14,9 +14,9 @@ Where the lift lands:
 - Manor: at the top of the long stairs.
 - Arctic: the top of the stair corridor.
 - Wizard: up in the upstairs classroom.
-- Anything else (modded levels included): a plain room, and the popup tells you how many rooms in from the truck it is.
+- Anything else (modded levels included): a plain room. The HUD line still points at it.
 
-The game does not always roll those rooms, and when it does not you get the plain room fallback. The popup is honest about which one you got.
+The game does not always roll those rooms, and when it does not you get the plain room fallback.
 
 ## What changes, what does not
 
@@ -42,13 +42,12 @@ The game does not always roll those rooms, and when it does not you get the plai
 | LiftCooldown | `4` | Seconds before the same player can ride again |
 | ShowLiftHint | `true` | HUD line pointing the host at the nearest lift pad |
 | VoidRescue | `true` | Anyone stuck outside every room for a couple of seconds gets lifted back to the ground pad |
-| Announce | `true` | The popup on load. Host only, since only the host runs the mod |
 | LogLevel | `Off` | Debug logs the plan, the pads and every ride |
 
 ## Known rough edges
 
 - The map shows the floor you are on. Players without the mod get the game's own map, which draws every room outline on one layer, so on their map the floors overlap once explored.
-- The lift is a spot, not a shaft. Players without the mod see no marker and no HUD line, so tell them where it is. The host's popup has the wording.
+- The lift is a spot, not a shaft. Players without the mod see no marker and no HUD line, so tell them where it is.
 - The Museum elevator car stays stuck where the game left it. The lift pad is in the corridor at the shaft mouth, not inside the car.
 - Levels from other mods work as long as they use the game's normal room lists.
 

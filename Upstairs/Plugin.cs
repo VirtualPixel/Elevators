@@ -23,7 +23,6 @@ namespace Upstairs
 
             PluginConfig.Init(Config);
             gameObject.AddComponent<LiftService>();
-            gameObject.AddComponent<Announcer>();
             gameObject.AddComponent<LiftHud>();
             new Harmony(Info.Metadata.GUID).PatchAll();
 
