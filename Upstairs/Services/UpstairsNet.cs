@@ -148,6 +148,45 @@ namespace Upstairs.Services
                 Elevator.PlayExtend(dock);
         }
 
+        // Host to everyone: the doors are to stand open this long (zero shuts them).
+        internal static void SendDoors(float seconds)
+        {
+            if (SemiFunc.IsMultiplayer() && Instance != null)
+                Instance.photonView.RPC(nameof(UpstairsDoorsRPC), RpcTarget.All, seconds);
+            else
+                Elevator.HoldDoors(seconds);
+        }
+
+        [PunRPC]
+        private void UpstairsDoorsRPC(float seconds, PhotonMessageInfo _info = default(PhotonMessageInfo))
+        {
+            if (SemiFunc.MasterOnlyRPC(_info))
+                Elevator.HoldDoors(seconds);
+        }
+
+        // A client whose car has just been built asks the host where the real one stands, so a
+        // late joiner does not see it parked on the ground while everyone else rides it upstairs.
+        internal static void AskCar()
+        {
+            if (SemiFunc.IsMultiplayer() && !PhotonNetwork.IsMasterClient && Instance != null)
+                Instance.photonView.RPC(nameof(UpstairsCarAskRPC), RpcTarget.MasterClient);
+        }
+
+        [PunRPC]
+        private void UpstairsCarAskRPC(PhotonMessageInfo _info = default(PhotonMessageInfo))
+        {
+            if (!PhotonNetwork.IsMasterClient || _info.Sender == null)
+                return;
+            photonView.RPC(nameof(UpstairsCarRPC), _info.Sender, Elevator.CurrentDock);
+        }
+
+        [PunRPC]
+        private void UpstairsCarRPC(int dock, PhotonMessageInfo _info = default(PhotonMessageInfo))
+        {
+            if (SemiFunc.MasterOnlyRPC(_info))
+                Elevator.SnapTo(dock);
+        }
+
         // A button press, from any client to the host, who decides if the car can go.
         internal static void RequestRide(int dock)
         {

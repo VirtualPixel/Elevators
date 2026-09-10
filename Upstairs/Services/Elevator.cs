@@ -476,7 +476,7 @@ namespace Upstairs.Services
             {
                 if (Moving)
                     return false;
-                openHold = OpenHoldTime;
+                UpstairsNet.SendDoors(OpenHoldTime);
                 return true;
             }
             if (Moving)
@@ -512,7 +512,7 @@ namespace Upstairs.Services
             {
                 if (button.Kind != ButtonKind.Call)
                     return false;
-                openHold = OpenHoldTime;
+                UpstairsNet.SendDoors(OpenHoldTime);
                 return true;
             }
             return TryDepart(target);
@@ -641,6 +641,8 @@ namespace Upstairs.Services
                 Plugin.Instance.StartCoroutine(Patrols());
                 Plugin.Instance.StartCoroutine(RescueMonsters());
             }
+            else
+                UpstairsNet.AskCar();
             Plugin.LogInfo($"[Elevator] car at {docks[ground].Name}, {docks.Count} docks");
         }
 
@@ -1443,27 +1445,25 @@ namespace Upstairs.Services
                 // The landing pause opens the doors on its own.
                 yield return new WaitForSeconds(LandPause + 0.5f);
             }
-            else
-                openHold = OpenHoldTime;
-            openHold = Mathf.Max(openHold, 6f);
+            UpstairsNet.SendDoors(6f);
             if (rider.Enemy.HasStateInvestigate)
                 rider.Enemy.StateInvestigate.Set(docks[from].Landing, false);
             yield return new WaitForSeconds(2f);
             if (rider == null || !rider.Spawned || rider.Enemy == null || Moving || atDock != from)
             {
-                openHold = 0f;
+                UpstairsNet.SendDoors(0f);
                 yield break;
             }
             if (rider.Enemy.CheckChase() || LocalInside() || PlayerWithin(car!.transform.parent.position, 3f))
             {
-                openHold = 0f;
+                UpstairsNet.SendDoors(0f);
                 yield break;
             }
             // At the doors as they shut. One that never made the walk is brought the last stretch.
             if (Vector3.Distance(rider.Enemy.transform.position, docks[from].Landing) > 4f)
                 rider.Enemy.EnemyTeleported(docks[from].Landing);
             yield return new WaitForSeconds(1f);
-            openHold = 0f;
+            UpstairsNet.SendDoors(0f);
             if (!TryDepart(to))
                 yield break;
             float w = 0f;
@@ -2055,6 +2055,22 @@ namespace Upstairs.Services
         {
             Dock? d = docks.Find(x => x.Name == name);
             return d != null ? d.Landing : Vector3.zero;
+        }
+
+        // The host's word on the doors, on every client.
+        public static void HoldDoors(float seconds) => openHold = seconds;
+
+        // A client catching up: the car stands where the host says, no ride.
+        public static void SnapTo(int dock)
+        {
+            if (car == null || Moving || dock < 0 || dock >= docks.Count || dock == atDock)
+                return;
+            Transform root = car.transform.parent;
+            root.position = docks[dock].Position + Vector3.up * FloorOffset;
+            if (body != null) body.position = root.position;
+            atDock = dock;
+            lastCarPos = root.position;
+            Plugin.LogInfo($"[Elevator] car placed at {docks[dock].Name} to match the host");
         }
 
         internal static float DoorOpenAmount => doorOpen;
