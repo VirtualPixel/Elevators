@@ -160,17 +160,20 @@ namespace Upstairs.Services
             MeasureGround();
             SettleLiftSide();
             List<string> avoid = RoomFilter.Parse(PluginConfig.AvoidRooms.Value);
-            // A shaft site stands the same elevator room on every floor, turned the way the ground one landed.
+            // The same lift room stands on every floor, turned the way the ground one landed: a shaft
+            // site's elevator room, or otherwise whatever room the game put at the ground lift cell.
+            // A random room there once left a dead end with no floor behind the opened wall.
             PrefabRef? liftPrefab = null;
             float liftRotation = 0f;
-            if (Site != null && Site.Shaft && sitePrefab != null)
+            Module? groundLift = GroundLiftModule();
+            if (groundLift != null)
             {
-                Module? groundLift = GroundLiftModule();
-                if (groundLift != null && groundLift.name.StartsWith(Site.ModuleName))
-                {
+                if (Site != null && Site.Shaft && sitePrefab != null && groundLift.name.StartsWith(Site.ModuleName))
                     liftPrefab = sitePrefab;
-                    liftRotation = groundLift.transform.eulerAngles.y;
-                }
+                else
+                    liftPrefab = PrefabOf(lg.Level, groundLift.name);
+                liftRotation = groundLift.transform.eulerAngles.y;
+                Plugin.LogInfo($"[Plan] lift room on every floor: {(liftPrefab != null ? liftPrefab.PrefabName : "none found for " + groundLift.name)} rot {liftRotation:0}");
             }
             // Each floor is published before its rooms spawn, so the rooms' own setup (room volumes,
             // the map) already knows which floor they belong to.
@@ -206,6 +209,23 @@ namespace Upstairs.Services
                 return;
             int removed = lg.LevelPathPoints.RemoveAll(p => p && IsOnNewFloor(p.transform.position.y));
             Plugin.LogInfo($"[Plan] kept monsters on the ground floor, {removed} path points off the new floors");
+        }
+
+        // The room list entry a spawned module came from, by its name.
+        private static PrefabRef? PrefabOf(Level level, string moduleName)
+        {
+            string wanted = moduleName.Replace("(Clone)", "").Trim();
+            foreach (List<PrefabRef> list in new[] { level.ModulesNormal1, level.ModulesNormal2, level.ModulesNormal3, level.ModulesPassage1, level.ModulesPassage2, level.ModulesPassage3, level.ModulesDeadEnd1, level.ModulesDeadEnd2, level.ModulesDeadEnd3 })
+            {
+                if (list == null)
+                    continue;
+                foreach (PrefabRef pr in list)
+                {
+                    if (pr != null && pr.IsValid() && (pr.PrefabName == wanted || (pr.ResourcePath ?? "").EndsWith(wanted)))
+                        return pr;
+                }
+            }
+            return null;
         }
 
         public static Module? GroundLiftModule()

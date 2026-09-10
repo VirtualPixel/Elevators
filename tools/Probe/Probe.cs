@@ -157,9 +157,21 @@ namespace UpstairsProbe
                     }
                 }
             }
+            Module[] modules = Object.FindObjectsOfType<Module>();
             foreach ((Vector3 pos, float yaw, string dock) in Elevator.DockList())
             {
                 Vector3 landing = pos + Quaternion.Euler(0f, yaw, 0f) * new Vector3(0f, 0f, -2.5f);
+                Module? nearest = null;
+                float nearestD = 99f;
+                foreach (Module m in modules)
+                {
+                    float d = Vector3.Distance(m.transform.position, pos);
+                    if (Mathf.Abs(m.transform.position.y - pos.y) < 6f && d < nearestD) { nearestD = d; nearest = m; }
+                }
+                bool landingFloor = Physics.Raycast(landing + Vector3.up * 0.5f, Vector3.down, 1.5f, ~0, QueryTriggerInteraction.Ignore);
+                Vector3 real = Elevator.LandingOf(dock);
+                bool realFloor = Physics.Raycast(real + Vector3.up * 0.5f, Vector3.down, 1.5f, ~0, QueryTriggerInteraction.Ignore);
+                log.LogInfo($"[Probe] {name} dock {dock} at {pos} yaw {yaw:0} roomSide {landing} floor={landingFloor} padLanding {real} floor={realFloor} module={(nearest != null ? nearest.name + " at " + nearest.transform.position + " yaw " + nearest.transform.eulerAngles.y.ToString("0") : "none")} dist={nearestD:0.0}");
                 for (int i = 0; i < 8; i++)
                 {
                     Vector3 dir = Quaternion.Euler(0f, 45f * i, 0f) * Vector3.forward;
@@ -378,7 +390,7 @@ namespace UpstairsProbe
         // How far the rider and any cargo stray from the car floor while it moves.
         private IEnumerator RideTelemetry(string name, PlayerAvatar me, string what, ValuableObject? cargo = null)
         {
-            float riderMin = 99f, riderMax = -99f, cargoMin = 99f, cargoMax = -99f, prev = float.NaN, jitter = 0f;
+            float riderMin = 99f, riderMax = -99f, cargoMin = 99f, cargoMax = -99f, prev = float.NaN, jitter = 0f, camMin = 99f, camMax = -99f;
             int samples = 0;
             float waited = 0f;
             while (Elevator.Moving && waited < 30f)
@@ -386,9 +398,14 @@ namespace UpstairsProbe
                 yield return new WaitForFixedUpdate();
                 waited += Time.fixedDeltaTime;
                 if (Elevator.CarVelocityY == 0f) continue;
-                float rider = me.transform.position.y - Elevator.FloorY;
+                float rider = PlayerController.instance.rb.position.y - Elevator.FloorY;
                 riderMin = Mathf.Min(riderMin, rider); riderMax = Mathf.Max(riderMax, rider);
                 if (!float.IsNaN(prev)) jitter = Mathf.Max(jitter, Mathf.Abs(rider - prev));
+                if (Camera.main != null)
+                {
+                    float camRel = Camera.main.transform.position.y - PlayerController.instance.rb.position.y;
+                    camMin = Mathf.Min(camMin, camRel); camMax = Mathf.Max(camMax, camRel);
+                }
                 prev = rider;
                 if (cargo != null)
                 {
@@ -397,7 +414,7 @@ namespace UpstairsProbe
                 }
                 samples++;
             }
-            log.LogInfo($"[Probe] {name} RIDE {what} samples={samples} rider above floor min={riderMin:0.00} max={riderMax:0.00} stepJitter={jitter:0.000}{(cargo != null ? $" cargo min={cargoMin:0.00} max={cargoMax:0.00} inside={Elevator.IsInside(cargo.transform.position)}" : "")}");
+            log.LogInfo($"[Probe] {name} RIDE {what} interp player={PlayerController.instance.rb.interpolation} samples={samples} rider above floor min={riderMin:0.00} max={riderMax:0.00} stepJitter={jitter:0.000} camAboveBody={camMin:0.00}..{camMax:0.00}{(cargo != null ? $" cargo min={cargoMin:0.00} max={cargoMax:0.00} inside={Elevator.IsInside(cargo.transform.position)}" : "")}");
         }
 
         private static int DockNamed(string name)

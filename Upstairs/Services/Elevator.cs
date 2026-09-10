@@ -388,9 +388,14 @@ namespace Upstairs.Services
             if (button == null || player == null || !player.isLocal)
                 return;
             Plugin.LogInfo($"[Elevator] grabbed {button.Kind} (dock {button.Dock})");
-            // The host's grab area is the press that counts; this is only the instant feedback.
-            if (!SemiFunc.IsMasterClientOrSingleplayer())
+            if (SemiFunc.IsMasterClientOrSingleplayer())
+                HandlePress(button, player.playerAvatar);
+            else
+            {
+                // Instant feedback; the host's grab area is the press that counts.
                 Press(button);
+                RideFromClient(button);
+            }
         }
 
         // The host's grab area saw a beam take hold: the press that counts, plus the click for
@@ -399,10 +404,19 @@ namespace Upstairs.Services
         {
             if (button == null || !SemiFunc.IsMasterClientOrSingleplayer())
                 return;
-            int grabberView = grabber != null && grabber.photonView != null ? grabber.photonView.ViewID : -1;
             Plugin.LogInfo($"[Elevator] grab area press {button.Kind} (dock {button.Dock})");
-            // Offline the buttons carry no network id, so the host presses its own copy here and
-            // only the other clients are told which one, and whether it was refused.
+            HandlePress(button, grabber);
+        }
+
+        // The one press on the host, whether it came from the host's own grab or the grab area,
+        // with the two never counting twice. Offline the buttons carry no network id, so the host
+        // presses its own copy here and only the other clients are told which one, and whether
+        // it was refused.
+        private static void HandlePress(LiftButton button, PlayerAvatar? grabber)
+        {
+            if (Time.time - button.LastPress < 0.3f)
+                return;
+            int grabberView = grabber != null && grabber.photonView != null ? grabber.photonView.ViewID : -1;
             bool denied = !Ride(button);
             Press(button, denied);
             if (SemiFunc.IsMultiplayer())
@@ -487,10 +501,22 @@ namespace Upstairs.Services
                 openHold = OpenHoldTime;
                 return true;
             }
-            if (SemiFunc.IsMasterClientOrSingleplayer())
-                return TryDepart(target);
-            UpstairsNet.RequestRide(target);
-            return true;
+            return TryDepart(target);
+        }
+
+        // A client's press goes to the host as a plain ride request; the host's grab area
+        // normally beats it there and the dedupe drops the second.
+        private static void RideFromClient(LiftButton button)
+        {
+            int target = button.Kind switch
+            {
+                ButtonKind.Call => button.Dock,
+                ButtonKind.Up => Neighbour(above: true),
+                ButtonKind.Down => Neighbour(above: false),
+                _ => -1
+            };
+            if (target >= 0 && target != atDock)
+                UpstairsNet.RequestRide(target);
         }
 
         // The next dock up or down from a given one.
@@ -743,6 +769,9 @@ namespace Upstairs.Services
 
             holder.transform.SetPositionAndRotation(dock.Position + Vector3.up * FloorOffset, Quaternion.Euler(0f, dock.Yaw, 0f));
             Rigidbody rb = holder.AddComponent<Rigidbody>();
+            // Drawn the way the player is drawn between physics steps, or at speed the floor
+            // renders a step apart from the feet standing on it.
+            rb.interpolation = PlayerController.instance != null && PlayerController.instance.rb != null ? PlayerController.instance.rb.interpolation : RigidbodyInterpolation.Interpolate;
             rb.isKinematic = true;
             rb.interpolation = RigidbodyInterpolation.Interpolate;
             rb.collisionDetectionMode = CollisionDetectionMode.Discrete;
@@ -1424,6 +1453,11 @@ namespace Upstairs.Services
 
             if (!Moving)
                 localRiding = false;
+            // The camera eases after the body and at eight metres a second sits half a metre
+            // behind it, which reads as sinking through the floor or floating off it. While the
+            // car carries you, it follows tight.
+            if (Moving && doorWait <= 0f && CameraPosition.instance != null && LocalInside())
+                CameraPosition.instance.OverrideSpeed(100f, 0.1f);
 
             if (hatch != null)
             {
@@ -1743,6 +1777,12 @@ namespace Upstairs.Services
             foreach (Dock d in docks)
                 list.Add((d.Position, d.Yaw, d.Name));
             return list;
+        }
+
+        internal static Vector3 LandingOf(string name)
+        {
+            Dock? d = docks.Find(x => x.Name == name);
+            return d != null ? d.Landing : Vector3.zero;
         }
 
         internal static string HumStatus() => hum == null ? "no hum" : $"playing={hum.isPlaying} vol={hum.volume:0.00} clip={(hum.clip != null ? hum.clip.name : "none")} group={(hum.outputAudioMixerGroup != null ? hum.outputAudioMixerGroup.name : "none")} active={hum.gameObject.activeInHierarchy}";
