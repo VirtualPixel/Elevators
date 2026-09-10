@@ -1,66 +1,104 @@
-# Upstairs
+# Elevators
 
-Every level gets another floor. Same rooms the level already uses, same doors, same loot spots, stacked on top of the ground floor with a lift between them. Optional basement too.
+Every level gets an upstairs and a basement, built out of that level's own rooms, and a real elevator between them: the Museum's car, buttons you grab, a shaft you can hear from any floor, and monsters that use it too.
 
-**Everyone installs it.** The host runs the floors; the new rooms are placed through the same calls the game uses for its own, so even someone without the mod sees them. The elevator is the part that needs the mod on your machine: the car, the doors, the buttons, and the sound.
+**Everyone installs it.** The host runs the floors, and the elevator, its buttons and its sounds need the mod on your machine. Someone in the lobby without it still gets moved between floors, but they never see the car.
+
+> **A note from Vippy**
+>
+> After way too long of a break, I'm finally back and working on these again :D Every one of my mods just got a full pass: bugs fixed, reports read, a few things I'd always meant to do. New builds and fixes land in [Vippy's Discord](https://discord.gg/kKqhck2NrP) before they hit Thunderstore, so come hang out. Thanks for sticking around.
+
+## Why
+
+Late levels in R.E.P.O. sprawl. By level ten you're walking a long way out from the truck through rooms that all look the same, and the map is a scroll. Elevators holds the ground floor to a sane size and sends the rest of the building up and down instead. Same rooms, same loot spots, same doors, stacked. You spend the level moving through a building rather than across one.
+
+And then there's the elevator. I wanted the real thing, not a teleport: doors that close on you, a car that hums and thuds, a call button you hear pressed on a floor you're not on.
 
 ## The elevator
 
-The game's own elevator car, the one from the Museum, with a light inside and two buttons on the wall by the doors.  Press the call button and the doors open, or the car comes if it is elsewhere. Step in and grab the up or down button: the doors shut and the car rides the shaft to the next floor, you along with it, and the doors open again up there for a few seconds. A second press of the same button while it moves takes you straight on to the floor after, no stop between.
+It's the game's own elevator car, the one stuck in the Museum, given its job back. Press the call button and the doors open, or the car comes down the shaft to you. Step in, grab UP or DOWN, and the doors shut and the car carries you, you and whatever you dragged in with you. It lands with a thud and a shudder, waits a beat, and opens. Press the same button twice and it rides straight through to the floor after.
 
-The buttons are the game's own pressable buttons, the kind the shop's reroll sits on, so the grabber sticks to them and the press is the same press. Call opens the doors when the car is already there, and an OPEN button inside does the same from the other wall. Press up twice and it rides straight through to the second floor. A press the car can't honour, up on the top floor say, gets a refusal. The roof hatch is a small door: grab it and swing it open or shut.
+- The buttons are the shop's pressable button, grab area and all, on the Museum's own wall plate. A press the car can't honour, UP on the top floor say, gets a refusal.
+- An OPEN button inside, a call button at every floor, and a roof hatch you grab and swing.
+- Doors open by button and on arrival, close on their own, and hold for anyone (or anything) standing in them.
+- Every floor's doorway carries the shaft's sound. You hear the car called, moving, and landing through the doors on any floor.
+- Between floors the shaft is the Museum's own shaft walls and pipes with a few service lights. Fall out of the car and there's a real shaft to fall down.
 
-Open the map and the wheel steps through the floors, with a tick and the floor's name written on the screen. It opens on your floor and follows you between floors. Each floor is drawn on its own; nothing from the floor above or below shows through. The map's route to the extraction point, or to the truck once you're done, leads to the nearest elevator when the destination is on another floor, and the elevator doorway is marked on every floor in its own colour.
+On the Museum it rides the actual shaft, elevator room on every floor, sub floors as side stops. On Manor it's at the top of the long stairs, on McJannek Station the stair corridor, on Swiftbroom the upstairs classroom. Anywhere else, modded levels included, it takes a plain room.
 
-Everyone in the lobby installs the mod. Someone without it stands where the car docks and the host tumbles them up, the way the game pulls a player out of the void, but they see no car and cannot ride it.
+## The monsters
 
-Where the elevator stands:
+This is the part I spent the longest on, because an elevator that's a safe room is a broken game.
 
-- Museum: the real thing. The level's own elevator room stands on every floor with its shafts lined up, the stuck car is gone, its doors become landing doors, and the elevator rides the actual shaft. Each of those rooms has a sub floor under it, and it is a side stop: down from that floor takes you there, up brings you back, and it is skipped on the way past.
-- Manor: at the top of the long stairs.
-- Arctic: the top of the stair corridor.
-- Wizard: up in the upstairs classroom.
-- Anything else (modded levels included): a plain room. The car is the tell.
+- The car floor is on the navmesh wherever the car stands. A monster chasing you walks in after you, and one inside when the doors shut steps out with you at the other end.
+- A monster that had you in its sights when the doors closed turns up on your new floor a little later, out of sight and hunting. The Shadow Child does it faster and never bothers with the car.
+- Now and then an idle monster walks to a call button, presses it, waits for the doors, and rides to another floor, usually one with someone on it. The more floors, the more often. You hear every bit of that through the doors.
+- The Huntsman hears the shaft from anywhere on his floor.
+- The elevator is loud. Leaving and landing draw whatever is nearby to the shaft.
 
-The game does not always roll those rooms, and when it does not you get the plain room fallback.
+All of it configurable, all of it off with one switch if you want the floors without the company.
 
-## What changes, what does not
+## The map
 
-- Rooms on the new floor come from the level's normal, passage and dead end lists. Nothing custom, nothing that looks out of place.
-- The ground floor is held to `GroundRooms` rooms (8 by default, a third level's size). Past that, the rooms a deep level would sprawl across go on the other floors instead, extraction rooms included, so a late level grows up rather than a long way out from the truck.
-- On a level with two or more extraction points, one of them stands on a new floor. The count is the game's own, the map's route walks you to the elevator for it, and the haul loop is otherwise untouched. `ExtractionOnNewFloors` turns it off.
-- The ground floor keeps its normal loot. The new floors get `ExtraLoot` percent of that on top (30 by default), placed the way the game places its own. The quota grows with them the way it does with any valuable.
-- Monsters follow. The game moves a monster that has lost you to a fresh spot some way off, and those spots include the floor you rode to, so a ride buys time, not safety. The elevator is loud: leaving and arriving draws anything close to the shaft, and a monster that had you in its sights when the doors shut turns up on your new floor a little while later, out of sight and looking. Monsters also ride it on their own now and then: an idle one near a dock walks to the call button, presses it when it gets there, waits for the doors, and steps out on another floor, four times in five one with someone on it. More floors, more rides. The Huntsman hears the shaft from anywhere on his floor and comes to the doors whenever the car runs. Every dock carries the shaft's sound, so a car being called, moving, and landing can be heard by the doors on any floor. The car floor is on the navmesh wherever the car stands, so a monster chasing you walks in after you, and one caught inside when the doors shut steps out with you at the other end. The Shadow Child skips the elevator and simply appears. Turn `EnemiesOnNewFloors` off to keep them downstairs, `MonsterPatrolInterval` to 0 to stop the rides.
-- The gap between floors is measured per level from the tallest and deepest rooms in play, so a catwalk never pokes through the floor above. If you somehow end up outside every room and off the navmesh, on a roof between floors say, the lift catches you after a few seconds and puts you back on the ground pad. FreeFly flyers are left alone.
+Open the map and the wheel steps through the floors, each drawn on its own with its name on the screen. It opens on your floor and follows you between floors. The route to the extraction point, or to the truck once you're done, walks you to the nearest elevator when the goal is on another floor, and every elevator doorway is marked on the map in its own colour.
+
+## What changes, what doesn't
+
+- Rooms on the new floors come from the level's own normal, passage and dead end lists.
+- The ground floor is held to eight rooms by default. Past that, the rooms a deep level would sprawl across go on the other floors instead, extraction rooms included, so a late level grows up rather than out.
+- With two or more extraction points, one stands on a new floor. The count stays the game's own.
+- The ground floor keeps its normal loot; the new floors get a modest share on top (30 percent by default). The quota grows with it like any other valuable. This is a bigger building, not a jackpot.
+- The gap between floors is measured per level from the tallest and deepest rooms in play, so nothing pokes through. If you somehow end up outside every room, on a roof between floors say, you get put back at the ground elevator after a few seconds.
 
 ## Settings
 
-`BepInEx/config/Vippy.Upstairs.cfg`, or in-game if you run REPOConfig.
+`BepInEx/config/Vippy.Elevators.cfg`, or in-game if you run [REPOConfig](https://thunderstore.io/c/repo/p/nickklmao/REPOConfig/).
 
 | Setting | Default | What it does |
 |---|---|---|
 | Enabled | `true` | The whole thing |
 | UpperFloor | `true` | Build the floor above |
-| Basement | `false` | Build a floor below as well. Crouch on the lift to reach it |
+| Basement | `true` | Build a floor below as well |
 | GroundRooms | `8` | Most rooms on the ground floor; the rest of a deep level goes on the other floors, 0 for the game's size |
 | FloorSize | `60` | Rooms on each new floor as a percent of the ground floor's rooms |
 | ExtraLoot | `30` | Valuables on the new floors, percent of what the ground floor gets |
-| EnemiesOnNewFloors | `true` | Monsters turn up on the new floors too |
+| EnemiesOnNewFloors | `true` | Monsters turn up on the new floors, follow you, and ride the elevator |
 | ExtractionOnNewFloors | `true` | One extraction point on a new floor when the level has two or more |
 | MonsterPatrolInterval | `90` | Seconds between monsters riding the elevator on their own with one extra floor, halved with two, 0 for never |
 | AvoidRooms | `Bottomless,Outside` | Rooms with these words in their name never get picked for a new floor |
 | LiftCooldown | `4` | Seconds before the same player can ride again |
 | VoidRescue | `true` | Anyone stuck outside every room for a few seconds gets brought back to the ground elevator |
-| LogLevel | `Off` | Debug logs the plan, the pads and every ride |
+| LogLevel | `Off` | Debug logs the plan, the docks and every ride |
 
 ## Known rough edges
 
 - The map's player dot only shows on the floor you are on; scroll to another floor and it goes until you scroll back.
-- Outside the Museum the shaft is built from the Museum's own shaft walls and pipes, with a few service lights, since the level has nothing between the floors. The car and buttons are the game's own Museum assets, so they look the same on every map.
 - Levels from other mods work as long as they use the game's normal room lists.
+- It's a lot of new ground. If something looks wrong, the Discord is the fastest way to reach me, and a log helps.
 
-## Vippy
+## Compatibility
 
-I make R.E.P.O. mods and I read every bug report. Test builds land in [Vippy's Discord](https://discord.gg/kKqhck2NrP) before Thunderstore. The rest of my mods are [here](https://thunderstore.io/c/repo/p/Vippy/).
+Needs [REPOLib](https://thunderstore.io/c/repo/p/Zehs/REPOLib/) for the networked buttons; it installs with the mod. Works alongside my other mods. Loot and value mods stack on top of the extra loot here, so if a level feels rich, that's where to look first.
 
-Everything I make is free. If you want to help: [Ko-fi](https://ko-fi.com/vippydev), or code `vippy` for 25% off a [BisectHosting](https://bisecthosting.com/vippy) server.
+## Installation
+
+Install with Gale or r2modman and REPOLib comes along. By hand: drop `Elevators.dll` into `BepInEx/plugins/` next to REPOLib. Everyone in the lobby needs it.
+
+## Come hang out
+
+I'm Vippy. I make R.E.P.O. mods and I read every bug report.
+
+| | |
+|---|---|
+| **[Vippy's Discord](https://discord.gg/kKqhck2NrP)** | Bug reports, test builds before Thunderstore, and a say in what comes next. Come say hi. |
+| **[R.E.P.O. Modding Server](https://discord.gg/9fDzZ9sk95)** | The whole modding scene, not just me. |
+| **[More of my mods](https://thunderstore.io/c/repo/p/Vippy/)** | Everything else I've made for R.E.P.O. |
+
+## Keep the mods coming
+
+Everything I make is free and stays free. Two ways to help if you feel like it, neither one expected:
+
+- **[Ko-fi](https://ko-fi.com/vippydev)**: buy me a coffee and your name goes on the supporters list in my Discord. Every coffee buys another evening on the next update.
+- **[BisectHosting](https://bisecthosting.com/vippy)**: hosting a server for Minecraft or anything else your crew plays? Code `vippy` takes 25% off, and I get a cut at no cost to you. It's where my own servers live.
+
+[![25% off BisectHosting servers with code vippy](https://www.bisecthosting.com/partners/custom-banners/71eecea6-f5bb-437d-ac56-f6fee4266193.png)](https://bisecthosting.com/vippy)

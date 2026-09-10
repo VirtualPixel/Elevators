@@ -1,8 +1,8 @@
 {
-  "name": "Upstairs",
+  "name": "Elevators",
   "version_number": "1.0.0",
   "website_url": "https://thunderstore.io/c/repo/p/Vippy/",
-  "description": "Every level gets another floor built from its own rooms, with an elevator up to it. Optional basement, extra loot upstairs, monsters stay downstairs. Everyone installs it; the host runs the floors.",
+  "description": "Every level gets an upstairs, a basement, and a real elevator: the Museum's car, buttons you grab, a shaft you hear from any floor, monsters that ride it too. Everyone installs it.",
   "dependencies": [
     "BepInEx-BepInExPack-5.4.2305",
     "Zehs-REPOLib-4.2.0"

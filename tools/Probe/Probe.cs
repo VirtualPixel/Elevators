@@ -6,12 +6,12 @@ using BepInEx.Logging;
 using HarmonyLib;
 using UnityEngine;
 using UnityEngine.AI;
-using Upstairs.Services;
+using Elevators.Services;
 
-namespace UpstairsProbe
+namespace ElevatorsProbe
 {
-    [BepInPlugin("Vippy.UpstairsProbe", "UpstairsProbe", "0.1.0")]
-    [BepInDependency("Vippy.Upstairs")]
+    [BepInPlugin("Vippy.ElevatorsProbe", "ElevatorsProbe", "0.1.0")]
+    [BepInDependency("Vippy.Elevators")]
     public class Probe : BaseUnityPlugin
     {
         private static string[] levels = { "Museum", "Manor", "Arctic", "Wizard" };
@@ -22,7 +22,7 @@ namespace UpstairsProbe
         private void Awake()
         {
             log = Logger;
-            string flag = Path.Combine(Paths.ConfigPath, "upstairs-probe.flag");
+            string flag = Path.Combine(Paths.ConfigPath, "elevators-probe.flag");
             if (!File.Exists(flag))
                 return;
             string wanted = File.ReadAllText(flag).Trim();
@@ -31,7 +31,7 @@ namespace UpstairsProbe
             File.Delete(flag);
             gameObject.transform.parent = null;
             gameObject.hideFlags = HideFlags.HideAndDontSave;
-            new Harmony("Vippy.UpstairsProbe").PatchAll();
+            new Harmony("Vippy.ElevatorsProbe").PatchAll();
             log.LogInfo("[Probe] armed");
             StartCoroutine(Run());
         }
@@ -233,13 +233,13 @@ namespace UpstairsProbe
             log.LogInfo($"[Probe] {name} map active={map.Active} floors={lift.FloorCount} playerLayer={map.PlayerLayer} cam={(cam != null ? cam.name : "none")} rt={(cam != null && cam.targetTexture != null ? cam.targetTexture.width + "x" + cam.targetTexture.height : "none")}");
             for (int f = 0; f < lift.FloorCount; f++)
             {
-                Upstairs.Patches.MapFloorsPatch.Viewing = f;
+                Elevators.Patches.MapFloorsPatch.Viewing = f;
                 yield return new WaitForSecondsRealtime(1.5f);
                 yield return new WaitForEndOfFrame();
                 var layers = new System.Text.StringBuilder();
                 foreach (MapLayer layer in map.Layers)
                     layers.Append($" L{layer.layer}@{layer.transform.localPosition.y:0.0}({layer.transform.childCount})");
-                Transform? label = cam != null ? cam.transform.Find("Upstairs floor") : null;
+                Transform? label = cam != null ? cam.transform.Find("Elevators floor") : null;
                 string labelInfo = "none";
                 if (label != null)
                 {
@@ -254,7 +254,7 @@ namespace UpstairsProbe
                     if (tm.text == "?" && tm.gameObject.activeInHierarchy && marks.Length < 400)
                         marks.Append($" ?@{tm.transform.position.y:0.00}/{(tm.GetComponentInParent<MapLayer>() != null ? tm.GetComponentInParent<MapLayer>().layer : 999)}");
                 }
-                log.LogInfo($"[Probe] {name} map floor {f} '{Upstairs.Patches.MapFloorsPatch.ViewingName}' playerLayer={map.PlayerLayer} label {labelInfo} cull={(cam != null ? cam.cullingMask : 0)} over={(map.OverLayerParent != null ? map.OverLayerParent.name + "/" + map.OverLayerParent.childCount + "@" + map.OverLayerParent.localPosition.y.ToString("0.0") : "none")} marks:{marks} layers:{layers}");
+                log.LogInfo($"[Probe] {name} map floor {f} '{Elevators.Patches.MapFloorsPatch.ViewingName}' playerLayer={map.PlayerLayer} label {labelInfo} cull={(cam != null ? cam.cullingMask : 0)} over={(map.OverLayerParent != null ? map.OverLayerParent.name + "/" + map.OverLayerParent.childCount + "@" + map.OverLayerParent.localPosition.y.ToString("0.0") : "none")} marks:{marks} layers:{layers}");
                 if (cam != null && cam.targetTexture != null)
                 {
                     RenderTexture rt = cam.targetTexture;
@@ -275,7 +275,7 @@ namespace UpstairsProbe
             if (lift.FloorCount >= 2 && PlayerAvatar.instance != null)
             {
                 int mine = lift.FloorIndexOfHeight(PlayerAvatar.instance.transform.position.y);
-                Upstairs.Patches.MapFloorsPatch.Viewing = mine == 0 ? 1 : 0;
+                Elevators.Patches.MapFloorsPatch.Viewing = mine == 0 ? 1 : 0;
                 yield return new WaitForSecondsRealtime(0.3f);
                 RoomVolume? target = null;
                 foreach (RoomVolume rv in Object.FindObjectsOfType<RoomVolume>())
@@ -388,6 +388,17 @@ namespace UpstairsProbe
                 cg.GrabEnded(me.physGrabber);
                 yield return new WaitForSecondsRealtime(1.5f);
                 log.LogInfo($"[Probe] {name} CALL OPENS {(Elevator.DoorOpenAmount > 0.5f ? "ok" : "FAIL")}: {Elevator.DoorState()}");
+                // With the doors open, is the way from the landing into the car clear?
+                Vector3 landingSpot = Elevator.LandingOf("ground");
+                Vector3 carCentre = ground + Vector3.up * 0.9f;
+                foreach (float h in new[] { 0.4f, 1.0f, 1.6f })
+                {
+                    Vector3 from = new Vector3(landingSpot.x, ground.y + h, landingSpot.z);
+                    Vector3 dir = (new Vector3(carCentre.x, from.y, carCentre.z) - from);
+                    float dist = dir.magnitude;
+                    bool hit = Physics.Raycast(from, dir.normalized, out RaycastHit h2, dist, ~0, QueryTriggerInteraction.Ignore);
+                    log.LogInfo($"[Probe] {name} WAY IN at h {h}: {(hit ? $"blocked by {h2.collider.name} (layer {h2.collider.gameObject.layer}, {h2.distance:0.0} m of {dist:0.0})" : "clear")}");
+                }
                 yield return new WaitForSecondsRealtime(5f);
                 log.LogInfo($"[Probe] {name} after hold: {Elevator.DoorState()}");
             }
@@ -405,11 +416,11 @@ namespace UpstairsProbe
                 if (!Elevator.Moving)
                 {
                     log.LogWarning($"[Probe] {name} the grabbed up button started no ride");
-                    UpstairsNet.RequestRide(upDock);
+                    ElevatorsNet.RequestRide(upDock);
                 }
             }
             else
-                UpstairsNet.RequestRide(upDock);
+                ElevatorsNet.RequestRide(upDock);
             yield return new WaitForSecondsRealtime(1.5f);
             log.LogInfo($"[Probe] {name} hum during ride: {Elevator.HumStatus()}");
             yield return RideTelemetry(name, me, "UP");
@@ -429,7 +440,7 @@ namespace UpstairsProbe
                 cargo.physGrabObject.Teleport(me.transform.position + Vector3.right * 0.8f + Vector3.up * 0.5f, Quaternion.identity);
                 yield return new WaitForSecondsRealtime(1f);
             }
-            UpstairsNet.RequestRide(DockNamed("ground"));
+            ElevatorsNet.RequestRide(DockNamed("ground"));
             yield return new WaitForSecondsRealtime(1.5f);
             yield return RideTelemetry(name, me, "DOWN", cargo);
             yield return new WaitForSecondsRealtime(1f);
