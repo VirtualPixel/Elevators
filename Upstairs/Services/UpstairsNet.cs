@@ -149,5 +149,34 @@ namespace Upstairs.Services
             if (PhotonNetwork.IsMasterClient)
                 Elevator.TryDepart(dock);
         }
+
+        // Host to everyone: a button was pressed, play the click. The presser already heard it.
+        internal static void SendPress(int buttonView, int grabberView)
+        {
+            if (SemiFunc.IsMultiplayer() && Instance != null)
+                Instance.photonView.RPC(nameof(UpstairsPressRPC), RpcTarget.All, buttonView, grabberView);
+            else
+                Elevator.PlayPress(buttonView, grabberView);
+        }
+
+        // The player holding the roof hatch tells the others where it is; settle means they let go.
+        internal static void SendHatch(float open, bool settle)
+        {
+            if (SemiFunc.IsMultiplayer() && Instance != null)
+                Instance.photonView.RPC(nameof(UpstairsHatchRPC), RpcTarget.Others, open, settle);
+        }
+
+        [PunRPC]
+        private void UpstairsHatchRPC(float open, bool settle, PhotonMessageInfo _info = default(PhotonMessageInfo))
+        {
+            Elevator.RemoteHatch(open, settle);
+        }
+
+        [PunRPC]
+        private void UpstairsPressRPC(int buttonView, int grabberView, PhotonMessageInfo _info = default(PhotonMessageInfo))
+        {
+            if (SemiFunc.MasterOnlyRPC(_info))
+                Elevator.PlayPress(buttonView, grabberView);
+        }
     }
 }

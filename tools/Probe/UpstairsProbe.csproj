@@ -29,6 +29,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(RepoManagedDir)/UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>$(RepoManagedDir)/Unity.TextMeshPro.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
     <Reference Include="Assembly-CSharp"><HintPath>$(RepoManagedDir)/Assembly-CSharp.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Assembly-CSharp-firstpass"><HintPath>$(RepoManagedDir)/Assembly-CSharp-firstpass.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="PhotonUnityNetworking"><HintPath>$(RepoManagedDir)/PhotonUnityNetworking.dll</HintPath><Private>false</Private></Reference>

@@ -21,8 +21,22 @@ namespace Upstairs.Patches
             __instance.OverLayerParent = __instance.GetLayerParent(_position.y).transform;
         }
 
-        private static void Postfix(Map __instance)
+        private static void Postfix(Map __instance, MapModule __result)
         {
+            // The game bakes a room's real height into its map object, a tenth of a metre per
+            // metre, which puts a room forty metres up four map units above its layer, in view
+            // from every floor. The layer already carries the height, so the object sits at
+            // zero and its outlines with it.
+            if (__result != null)
+            {
+                Transform module = __result.transform;
+                module.localPosition = new Vector3(module.localPosition.x, 0f, module.localPosition.z);
+                foreach (Transform child in module)
+                {
+                    if (child.GetComponent<MapObject>() == null && child != __result.graphic)
+                        child.localPosition = new Vector3(child.localPosition.x, 0f, child.localPosition.z);
+                }
+            }
             if (saved == null)
                 return;
             __instance.OverLayerParent = saved;

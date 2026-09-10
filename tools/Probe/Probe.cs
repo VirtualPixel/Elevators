@@ -87,6 +87,7 @@ namespace UpstairsProbe
                     continue;
                 }
                 Report(levelName);
+                yield return MapCheck(levelName);
                 yield return Rides(levelName);
             }
             log.LogInfo("[Probe] DONE");
@@ -130,6 +131,69 @@ namespace UpstairsProbe
                     log.LogInfo($"[Probe] {name} pad {pad} onNavMesh={onNav} navDist={(onNav ? hit.distance : -1f):0.00}");
                 }
             }
+        }
+
+        // Open the map through its debug switch, step through the floors the way the wheel would,
+        // and save what the map camera draws for each one, with the layer heights it settled on.
+        private IEnumerator MapCheck(string name)
+        {
+            Map map = Map.Instance;
+            LiftService? lift = LiftService.Instance;
+            var buttons = Object.FindObjectsOfType<Elevator.LiftButton>();
+            int withArea = 0;
+            foreach (Elevator.LiftButton b in buttons)
+                if (b.GetComponent<PhysGrabObjectGrabArea>() != null && b.GetComponent<StaticGrabObject>() != null && b.GetComponent<Photon.Pun.PhotonView>() != null) withArea++;
+            log.LogInfo($"[Probe] {name} buttons={buttons.Length} attached={Count(buttons, b => b.Attached)} withGrabArea={withArea}");
+            if (map == null || lift == null)
+            {
+                log.LogWarning($"[Probe] {name}: no map or lift, map check skipped");
+                yield break;
+            }
+            Camera? cam = map.ActiveParent != null ? map.ActiveParent.GetComponentInChildren<Camera>(true) : null;
+            map.debugActive = true;
+            yield return new WaitForSecondsRealtime(1.5f);
+            log.LogInfo($"[Probe] {name} map active={map.Active} floors={lift.FloorCount} playerLayer={map.PlayerLayer} cam={(cam != null ? cam.name : "none")} rt={(cam != null && cam.targetTexture != null ? cam.targetTexture.width + "x" + cam.targetTexture.height : "none")}");
+            for (int f = 0; f < lift.FloorCount; f++)
+            {
+                Upstairs.Patches.MapFloorsPatch.Viewing = f;
+                yield return new WaitForSecondsRealtime(1.5f);
+                yield return new WaitForEndOfFrame();
+                var layers = new System.Text.StringBuilder();
+                foreach (MapLayer layer in map.Layers)
+                    layers.Append($" L{layer.layer}@{layer.transform.localPosition.y:0.0}({layer.transform.childCount})");
+                Transform? label = cam != null ? cam.transform.Find("Upstairs floor") : null;
+                string labelInfo = "none";
+                if (label != null)
+                {
+                    var r = label.GetComponent<Renderer>();
+                    var tmp = label.GetComponent<TMPro.TMP_Text>();
+                    Vector3 vp = cam != null ? cam.WorldToViewportPoint(label.position) : Vector3.zero;
+                    labelInfo = $"active={label.gameObject.activeInHierarchy} layer={label.gameObject.layer} renderer={(r != null ? r.enabled + "/" + r.isVisible + "/" + r.bounds.size : "none")} verts={(tmp != null && tmp.mesh != null ? tmp.mesh.vertexCount : -1)} chars={(tmp != null ? tmp.textInfo.characterCount : -1)} face={(tmp != null && tmp.fontMaterial != null && tmp.fontMaterial.HasProperty("_FaceColor") ? tmp.fontMaterial.GetColor("_FaceColor").ToString() : "?")} shader={(tmp != null && tmp.fontMaterial != null ? tmp.fontMaterial.shader.name : "?")} text='{(tmp != null ? tmp.text : "?")}' color={(tmp != null ? tmp.color.ToString() : "?")} viewport={vp} camRot={(cam != null ? cam.transform.rotation.eulerAngles.ToString() : "?")} camPos={(cam != null ? cam.transform.position.ToString() : "?")} local={label.localPosition} scale={label.localScale}";
+                }
+                var marks = new System.Text.StringBuilder();
+                foreach (TMPro.TMP_Text tm in map.GetComponentsInChildren<TMPro.TMP_Text>(true))
+                {
+                    if (tm.text == "?" && tm.gameObject.activeInHierarchy && marks.Length < 400)
+                        marks.Append($" ?@{tm.transform.position.y:0.00}/{(tm.GetComponentInParent<MapLayer>() != null ? tm.GetComponentInParent<MapLayer>().layer : 999)}");
+                }
+                log.LogInfo($"[Probe] {name} map floor {f} '{Upstairs.Patches.MapFloorsPatch.ViewingName}' playerLayer={map.PlayerLayer} label {labelInfo} cull={(cam != null ? cam.cullingMask : 0)} over={(map.OverLayerParent != null ? map.OverLayerParent.name + "/" + map.OverLayerParent.childCount + "@" + map.OverLayerParent.localPosition.y.ToString("0.0") : "none")} marks:{marks} layers:{layers}");
+                if (cam != null && cam.targetTexture != null)
+                {
+                    RenderTexture rt = cam.targetTexture;
+                    RenderTexture was = RenderTexture.active;
+                    RenderTexture.active = rt;
+                    var tex = new Texture2D(rt.width, rt.height, TextureFormat.RGB24, false);
+                    tex.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
+                    tex.Apply();
+                    RenderTexture.active = was;
+                    string file = Path.Combine(Paths.BepInExRootPath, $"probe-map-{name}-{f}.png");
+                    File.WriteAllBytes(file, tex.EncodeToPNG());
+                    Object.Destroy(tex);
+                    log.LogInfo($"[Probe] {name} map image {file}");
+                }
+            }
+            map.debugActive = false;
+            yield return new WaitForSecondsRealtime(1f);
         }
 
         private IEnumerator Rides(string name)

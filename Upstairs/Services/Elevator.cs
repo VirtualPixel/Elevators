@@ -45,6 +45,8 @@ namespace Upstairs.Services
             public int Dock;
             public bool Attached;
 
+            public float LastPress = -10f;
+
             public void OnPhotonInstantiate(PhotonMessageInfo info)
             {
                 object[] data = info.photonView.InstantiationData;
@@ -52,7 +54,24 @@ namespace Upstairs.Services
                     return;
                 Kind = (ButtonKind)(int)data[0];
                 Dock = (int)data[1];
+                // The grab area fires on the host when a beam takes hold inside it, the way the
+                // shop's reroll button is pressed. Listeners are not cloned, so they go on here.
+                Wire();
                 Attach(this);
+            }
+
+            private bool wired;
+
+            public void Wire()
+            {
+                if (wired)
+                    return;
+                wired = true;
+                PhysGrabObjectGrabArea area = GetComponent<PhysGrabObjectGrabArea>();
+                if (area == null)
+                    return;
+                foreach (PhysGrabObjectGrabArea.GrabArea grabArea in area.grabAreas)
+                    grabArea.grabAreaEventOnStart.AddListener(() => PressedOnHost(this, area.GetLatestGrabber()));
             }
         }
 
@@ -67,8 +86,21 @@ namespace Upstairs.Services
         private static readonly List<LiftButton> loose = new List<LiftButton>();
         private static GameObject? buttonTemplate;
         private static PrefabRef? buttonRef;
+        private static bool shopButton;
         private const string ButtonPrefabId = "UpstairsButton";
         private const string ButtonMeshName = "Museum Elevator Button";
+        private const string ShopModulePath = "level/shop/modules/Module - Shop - N - Center Extract";
+        private const string ShopButtonName = "Shop Button";
+        private const float ShopButtonScale = 0.55f;
+        private static GameObject? hatchTemplate;
+        private static PrefabRef? hatchRef;
+        private const string HatchPrefabId = "UpstairsHatch";
+        private const string HatchHolderName = "Elevator Hatch";
+        private const string HatchPartName = "Hinge Template";
+        private const float HatchSwing = 110f;
+        private const float HatchSendRate = 0.1f;
+        private static bool hatchHeld;
+        private static float hatchSent;
 
         private sealed class Dock
         {
@@ -125,9 +157,108 @@ namespace Upstairs.Services
         {
             if (buttonTemplate != null)
                 return;
-            var template = new GameObject(ButtonPrefabId);
+            GameObject? template = ShopButtonTemplate();
+            shopButton = template != null;
+            template ??= PlateTemplate();
+            template.name = ButtonPrefabId;
             template.SetActive(false);
             Object.DontDestroyOnLoad(template);
+            template.AddComponent<LiftButton>();
+            buttonTemplate = template;
+            buttonRef = NetworkPrefabs.RegisterNetworkPrefab(ButtonPrefabId, template);
+            Plugin.LogInfo($"[Elevator] button prefab registered ({(shopButton ? "shop button" : "Museum plate")}), ref {(buttonRef != null ? "ok" : "MISSING")}");
+            EnsureHatchPrefab();
+        }
+
+        // The roof hatch as a thing you take hold of and swing: the Museum's hatch plate with its
+        // hinge stripped, one box to grab, and the game's StaticGrabObject so the beam sticks to
+        // it. The swing itself is driven from the grabber's pull, since a joint can't ride a car.
+        private static void EnsureHatchPrefab()
+        {
+            if (hatchTemplate != null)
+                return;
+            GameObject? holder = FindAsset(HatchHolderName);
+            Transform? part = holder != null ? holder.transform.Find(HatchPartName) : null;
+            if (part == null)
+            {
+                Plugin.LogInfo("[Elevator] no hatch plate to borrow, the roof hatch stays fixed");
+                return;
+            }
+            GameObject template = Object.Instantiate(part.gameObject);
+            template.name = HatchPrefabId;
+            template.SetActive(false);
+            Object.DontDestroyOnLoad(template);
+            StripScripts(template);
+            int layer = LayerMask.NameToLayer("StaticGrabObject");
+            foreach (Transform t in template.GetComponentsInChildren<Transform>(true))
+                t.gameObject.layer = layer;
+            foreach (Collider c in template.GetComponentsInChildren<Collider>(true))
+                Object.DestroyImmediate(c);
+            var box = template.AddComponent<BoxCollider>();
+            box.center = new Vector3(0f, 0f, 0.8f);
+            box.size = new Vector3(1.46f, 0.08f, 1.6f);
+            var grab = template.AddComponent<StaticGrabObject>();
+            grab.colliderTransform = template.transform;
+            grab.uiPosition = template.transform;
+            grab.hoverText = "Roof hatch";
+            template.AddComponent<PhotonView>();
+            template.AddComponent<LiftButton>();
+            hatchTemplate = template;
+            hatchRef = NetworkPrefabs.RegisterNetworkPrefab(HatchPrefabId, template);
+            Plugin.LogInfo($"[Elevator] hatch prefab registered, ref {(hatchRef != null ? "ok" : "MISSING")}");
+        }
+
+        // The game's own pressable button, the one the shop's reroll sits on: a real grab body with
+        // a grab area, its own light, and the grabber's beam already knows what to do with it. The
+        // shop module's press wiring is dropped for a fresh grab area the buttons wire on arrival.
+        private static GameObject? ShopButtonTemplate()
+        {
+            GameObject? module = Resources.Load<GameObject>(ShopModulePath);
+            if (module == null)
+                return null;
+            Transform? source = null;
+            foreach (Transform t in module.GetComponentsInChildren<Transform>(true))
+            {
+                if (t.name == ShopButtonName)
+                {
+                    source = t;
+                    break;
+                }
+            }
+            if (source == null)
+                return null;
+            GameObject button = Object.Instantiate(source.gameObject);
+            button.SetActive(false);
+            button.transform.localScale = Vector3.one;
+            foreach (PhysGrabObjectGrabArea old in button.GetComponents<PhysGrabObjectGrabArea>())
+                Object.DestroyImmediate(old);
+            foreach (PhotonView old in button.GetComponentsInChildren<PhotonView>(true))
+                Object.DestroyImmediate(old);
+            Transform? areaBox = null;
+            foreach (Transform t in button.GetComponentsInChildren<Transform>(true))
+            {
+                if (t.name.EndsWith("Grab Area"))
+                    areaBox = t;
+            }
+            StaticGrabObject grab = button.GetComponent<StaticGrabObject>() ?? button.AddComponent<StaticGrabObject>();
+            grab.colliderTransform = button.transform;
+            grab.uiPosition = button.transform;
+            grab.hoverText = "Elevator";
+            button.AddComponent<PhotonView>();
+            if (areaBox != null)
+            {
+                var area = button.AddComponent<PhysGrabObjectGrabArea>();
+                area.grabAreas.Add(new PhysGrabObjectGrabArea.GrabArea { grabAreaTransform = areaBox });
+            }
+            return button;
+        }
+
+        // Fallback when the shop module is not there to borrow from: the Museum's wall plate with
+        // the game's StaticGrabObject on a box.
+        private static GameObject PlateTemplate()
+        {
+            var template = new GameObject(ButtonPrefabId);
+            template.SetActive(false);
             int layer = LayerMask.NameToLayer("StaticGrabObject");
             GameObject? plate = FindAsset(ButtonMeshName);
             Vector3 size = new Vector3(0.3f, 0.3f, 0.1f);
@@ -163,10 +294,7 @@ namespace Upstairs.Services
             grab.uiPosition = template.transform;
             grab.hoverText = "Elevator";
             template.AddComponent<PhotonView>();
-            template.AddComponent<LiftButton>();
-            buttonTemplate = template;
-            buttonRef = NetworkPrefabs.RegisterNetworkPrefab(ButtonPrefabId, template);
-            Plugin.LogInfo($"[Elevator] button prefab registered ({(plate != null ? "Museum plate" : "plain plate")}), ref {(buttonRef != null ? "ok" : "MISSING")}");
+            return template;
         }
 
         // A spawned button finds its slot; before the car exists it waits.
@@ -180,11 +308,19 @@ namespace Upstairs.Services
                     continue;
                 button.transform.SetParent(slot.Anchor, false);
                 button.transform.localPosition = Vector3.zero;
-                button.transform.localRotation = Quaternion.identity;
+                bool isHatch = button.Kind == ButtonKind.Hatch;
+                button.transform.localRotation = shopButton && !isHatch ? Quaternion.FromToRotation(Vector3.up, Vector3.forward) : Quaternion.identity;
+                button.transform.localScale = shopButton && !isHatch ? Vector3.one * ShopButtonScale : Vector3.one;
                 button.Attached = true;
+                if (isHatch)
+                {
+                    hatch = button.transform;
+                    hatchClosed = Quaternion.identity;
+                    hatch.localRotation = Quaternion.Euler(-HatchSwing * hatchOpen, 0f, 0f);
+                }
                 StaticGrabObject grab = button.GetComponent<StaticGrabObject>();
                 if (grab != null)
-                    grab.hoverText = button.Kind switch { ButtonKind.Up => "Up", ButtonKind.Down => "Down", _ => "Call the elevator" };
+                    grab.hoverText = button.Kind switch { ButtonKind.Up => "Up", ButtonKind.Down => "Down", ButtonKind.Hatch => "Roof hatch", _ => "Call the elevator" };
                 loose.Remove(button);
                 return;
             }
@@ -200,12 +336,19 @@ namespace Upstairs.Services
             int spawned = 0;
             foreach (Slot slot in slots)
             {
-                GameObject? go = NetworkPrefabs.SpawnNetworkPrefab(buttonRef, slot.Anchor.position, slot.Anchor.rotation, 0, new object[] { (int)slot.Kind, slot.Dock });
+                PrefabRef? prefab = slot.Kind == ButtonKind.Hatch ? hatchRef : buttonRef;
+                if (prefab == null)
+                    continue;
+                GameObject? go = NetworkPrefabs.SpawnNetworkPrefab(prefab, slot.Anchor.position, slot.Anchor.rotation, 0, new object[] { (int)slot.Kind, slot.Dock });
                 if (go == null)
                     continue;
+                // Offline the spawn is a plain copy of the sleeping template, so wake it here.
+                if (!go.activeSelf)
+                    go.SetActive(true);
                 LiftButton button = go.GetComponent<LiftButton>();
                 button.Kind = slot.Kind;
                 button.Dock = slot.Dock;
+                button.Wire();
                 Attach(button);
                 spawned++;
             }
@@ -218,13 +361,51 @@ namespace Upstairs.Services
             LiftButton button = grab.GetComponent<LiftButton>();
             if (button == null || player == null || player.photonView == null || !player.photonView.IsMine)
                 return;
-            Play(sounds?.soundButton, grab.transform.position);
-            Plugin.Instance.StartCoroutine(Squash(grab.transform));
+            Press(button);
+            Ride(button);
+        }
+
+        // The host's grab area saw a beam take hold: the press that counts, plus the click for
+        // everyone who did not press it themselves.
+        private static void PressedOnHost(LiftButton button, PlayerAvatar? grabber)
+        {
+            if (button == null || !SemiFunc.IsMasterClientOrSingleplayer())
+                return;
+            int grabberView = grabber != null && grabber.photonView != null ? grabber.photonView.ViewID : -1;
+            UpstairsNet.SendPress(button.GetComponent<PhotonView>()?.ViewID ?? -1, grabberView);
+            Ride(button);
+        }
+
+        // Everyone: the click and the squash, unless this is the player who pressed it and heard it already.
+        public static void PlayPress(int buttonView, int grabberView)
+        {
+            PhotonView view = PhotonView.Find(buttonView);
+            LiftButton button = view != null ? view.GetComponent<LiftButton>() : null;
+            if (button == null)
+                return;
+            PhotonView? mine = PlayerAvatar.instance != null ? PlayerAvatar.instance.photonView : null;
+            if (mine != null && mine.ViewID == grabberView)
+                return;
+            Press(button);
+        }
+
+        private static void Press(LiftButton button)
+        {
+            if (Time.time - button.LastPress < 0.3f)
+                return;
+            button.LastPress = Time.time;
+            Play(sounds?.soundButton, button.transform.position);
+            Plugin.Instance.StartCoroutine(Squash(button.transform));
+        }
+
+        private static void Ride(LiftButton button)
+        {
             int target = button.Kind switch
             {
                 ButtonKind.Call => button.Dock,
                 ButtonKind.Up => Neighbour(above: true),
-                _ => Neighbour(above: false)
+                ButtonKind.Down => Neighbour(above: false),
+                _ => -1
             };
             if (target >= 0)
                 UpstairsNet.RequestRide(target);
@@ -233,7 +414,8 @@ namespace Upstairs.Services
         private static System.Collections.IEnumerator Squash(Transform plate)
         {
             Vector3 rest = plate.localScale;
-            plate.localScale = new Vector3(rest.x, rest.y, rest.z * 0.4f);
+            // The shop button presses along its own up; the plate squashes into the wall.
+            plate.localScale = shopButton ? new Vector3(rest.x, rest.y * 0.6f, rest.z) : new Vector3(rest.x, rest.y, rest.z * 0.4f);
             yield return new WaitForSeconds(0.15f);
             if (plate != null)
                 plate.localScale = rest;
@@ -256,6 +438,7 @@ namespace Upstairs.Services
             hatch = null;
             hatchOpen = 0f;
             hatchWantOpen = false;
+            hatchHeld = false;
             docks.Clear();
             atDock = -1;
             toDock = -1;
@@ -310,18 +493,24 @@ namespace Upstairs.Services
             StripScripts(body);
             foreach (Transform child in body.transform)
             {
-                if (child.name.StartsWith("Elevator Hatch"))
+                if (child.name.StartsWith(HatchHolderName))
                 {
-                    // The roof hatch stays, as a small door you grab to swing open and shut.
-                    hatch = child.Find("Hinge Template");
-                    if (hatch != null)
+                    // The roof hatch is a small door you take hold of and swing. The plate that came
+                    // with the carriage makes way for the grabbable one the host spawns in its place.
+                    Transform? plate = child.Find(HatchPartName);
+                    if (plate != null && hatchRef != null)
                     {
-                        hatchClosed = hatch.localRotation;
-                        foreach (Collider c in hatch.GetComponentsInChildren<Collider>())
-                        {
-                            var lift = c.gameObject.AddComponent<LiftButton>();
-                            lift.Kind = ButtonKind.Hatch;
-                        }
+                        var anchor = new GameObject("slot Hatch").transform;
+                        anchor.SetParent(child, false);
+                        anchor.localPosition = plate.localPosition;
+                        anchor.localRotation = plate.localRotation;
+                        slots.Add(new Slot { Anchor = anchor, Kind = ButtonKind.Hatch, Dock = -1 });
+                        plate.gameObject.SetActive(false);
+                    }
+                    else if (plate != null)
+                    {
+                        hatch = plate;
+                        hatchClosed = plate.localRotation;
                     }
                 }
                 else if (child.name.StartsWith("Invisible Wall"))
@@ -379,9 +568,10 @@ namespace Upstairs.Services
             float wallX = cage != null && cage.sharedMesh != null ? cage.sharedMesh.bounds.extents.x - 0.1f : 1.05f;
             cageHalfWidth = wallX + 0.1f;
             // The panel's forward points into the car; buttons and labels stand proud of the plate along it.
-            Transform panel = Panel(body.transform, new Vector3(wallX - 0.02f, -0.5f, -0.6f), Quaternion.LookRotation(Vector3.left), 0.7f);
-            AddSlot(panel, new Vector3(0f, 0.17f, 0.02f), ButtonKind.Up, -1, "UP");
-            AddSlot(panel, new Vector3(0f, -0.17f, 0.02f), ButtonKind.Down, -1, "DOWN");
+            // Room for two shop buttons with a word under each.
+            Transform panel = Panel(body.transform, new Vector3(wallX - 0.02f, -0.5f, -0.6f), Quaternion.LookRotation(Vector3.left), 0.9f);
+            AddSlot(panel, new Vector3(0f, 0.28f, 0.02f), ButtonKind.Up, -1, "UP");
+            AddSlot(panel, new Vector3(0f, -0.12f, 0.02f), ButtonKind.Down, -1, "DOWN");
             var panelLight = new GameObject("panel light").AddComponent<Light>();
             panelLight.transform.SetParent(body.transform, false);
             panelLight.transform.localPosition = new Vector3(wallX - 0.35f, -0.4f, -0.6f);
@@ -516,8 +706,8 @@ namespace Upstairs.Services
             if (carRenderer != null)
                 post.GetComponent<Renderer>().sharedMaterial = carRenderer.sharedMaterial;
             // Faces the room, which is the car's -z.
-            Transform plate = Panel(stand.transform, new Vector3(0f, 1.1f, -0.08f), Quaternion.Euler(0f, 180f, 0f), 0.36f);
-            AddSlot(plate, new Vector3(0f, 0.02f, 0.02f), ButtonKind.Call, index, "CALL");
+            Transform plate = Panel(stand.transform, new Vector3(0f, 1.1f, -0.08f), Quaternion.Euler(0f, 180f, 0f), 0.44f);
+            AddSlot(plate, new Vector3(0f, 0.08f, 0.02f), ButtonKind.Call, index, "CALL");
             var glow = new GameObject("call light").AddComponent<Light>();
             glow.transform.SetParent(stand.transform, false);
             glow.transform.localPosition = new Vector3(0f, 0.6f, -1.2f);
@@ -737,11 +927,12 @@ namespace Upstairs.Services
 
             if (hatch != null)
             {
-                float h = Mathf.MoveTowards(hatchOpen, hatchWantOpen ? 1f : 0f, dt * 2.5f);
-                if (h != hatchOpen)
+                SwingHatch();
+                float h = hatchHeld ? hatchOpen : Mathf.MoveTowards(hatchOpen, hatchWantOpen ? 1f : 0f, dt * 2.5f);
+                if (h != hatchOpen || hatchHeld)
                 {
                     hatchOpen = h;
-                    hatch.localRotation = hatchClosed * Quaternion.Euler(-110f * h, 0f, 0f);
+                    hatch.localRotation = hatchClosed * Quaternion.Euler(-HatchSwing * h, 0f, 0f);
                 }
             }
 
@@ -886,10 +1077,67 @@ namespace Upstairs.Services
             if (cam == null || !Physics.Raycast(cam.transform.position, cam.transform.forward, out RaycastHit hit, 2.6f))
                 return;
             LiftButton button = hit.collider.GetComponentInParent<LiftButton>();
-            if (button == null || button.Kind != ButtonKind.Hatch)
+            // A grabbable hatch swings under the beam; only the fixed fallback plate toggles.
+            if (button == null || button.Kind != ButtonKind.Hatch || hatchRef != null)
                 return;
             hatchWantOpen = !hatchWantOpen;
             Play(sounds?.soundActivate2, hit.point);
+        }
+
+        // The local player holding the hatch drags it: the plate turns on its hinge to point at
+        // wherever the beam is pulling, and everyone else is told where it is. Letting go leaves
+        // it to fall shut or swing the rest of the way open, whichever is nearer.
+        private static void SwingHatch()
+        {
+            if (hatch == null || hatchRef == null)
+                return;
+            PlayerAvatar me = PlayerAvatar.instance;
+            PhysGrabber? grabber = me != null ? me.physGrabber : null;
+            bool held = grabber != null && grabber.grabbed && grabber.grabbedStaticGrabObject != null && grabber.grabbedStaticGrabObject.transform == hatch;
+            if (held)
+            {
+                Transform pivot = hatch.parent;
+                Vector3 axis = pivot.TransformDirection(Vector3.right);
+                Vector3 closed = pivot.TransformDirection(Vector3.forward);
+                Vector3 pull = grabber!.physGrabPointPullerPosition - hatch.position;
+                pull -= axis * Vector3.Dot(pull, axis);
+                if (pull.sqrMagnitude > 0.01f)
+                {
+                    float angle = Vector3.SignedAngle(closed, pull, axis);
+                    float target = Mathf.Clamp(-angle / HatchSwing, 0f, 1f);
+                    hatchOpen = Mathf.MoveTowards(hatchOpen, target, Time.deltaTime * 4f);
+                }
+                if (!hatchHeld)
+                    Play(sounds?.soundActivate2, hatch.position);
+                hatchHeld = true;
+                if (Time.time - hatchSent >= HatchSendRate)
+                {
+                    hatchSent = Time.time;
+                    UpstairsNet.SendHatch(hatchOpen, settle: false);
+                }
+            }
+            else if (hatchHeld)
+            {
+                hatchHeld = false;
+                hatchWantOpen = hatchOpen > 0.45f;
+                UpstairsNet.SendHatch(hatchWantOpen ? 1f : 0f, settle: true);
+            }
+        }
+
+        // Another player's hand on the hatch.
+        public static void RemoteHatch(float open, bool settle)
+        {
+            if (hatchHeld)
+                return;
+            if (settle)
+                hatchWantOpen = open > 0.5f;
+            else
+            {
+                hatchOpen = Mathf.Clamp01(open);
+                hatchWantOpen = hatchOpen > 0.45f;
+                if (hatch != null)
+                    hatch.localRotation = hatchClosed * Quaternion.Euler(-HatchSwing * hatchOpen, 0f, 0f);
+            }
         }
 
         private static int Neighbour(bool above)
@@ -926,7 +1174,7 @@ namespace Upstairs.Services
             {
                 ButtonKind.Up => "up",
                 ButtonKind.Down => "down",
-                ButtonKind.Hatch => hatchWantOpen ? "close the hatch" : "open the hatch",
+                ButtonKind.Hatch => hatchRef != null ? "swing the hatch" : hatchWantOpen ? "close the hatch" : "open the hatch",
                 _ => "call"
             };
         }

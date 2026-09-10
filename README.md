@@ -6,9 +6,13 @@ Every level gets another floor. Same rooms the level already uses, same doors, s
 
 ## The elevator
 
-The game's own elevator car, the one from the Museum, with a light inside and two buttons on the wall by the doors. A line at the bottom of the HUD points at it with the distance. Walk up and the doors slide open. Step in, look at the up or down button and grab it: the doors shut and the car rides the shaft to the next floor, you along with it, and the doors open again up there. Each floor has a call button on a post beside the dock, so you can bring the car to you.
+The game's own elevator car, the one from the Museum, with a light inside and two buttons on the wall by the doors. A line at the bottom of the HUD points at it with the distance. Walk up and the doors slide open. Step in and grab the up or down button: the doors shut and the car rides the shaft to the next floor, you along with it, and the doors open again up there. Each floor has a call button on a post beside the dock, so you can bring the car to you.
 
-Anyone in the lobby without the mod still gets moved: they stand where the car docks and the host tumbles them up, the way the game pulls a player out of the void. They do not see the car and cannot ride it.
+The buttons are the game's own pressable buttons, the kind the shop's reroll sits on, so the grabber sticks to them and the press is the same press. The roof hatch is a small door: grab it and swing it open or shut.
+
+Open the map and the wheel steps through the floors, with a tick and the floor's name written on the screen. Each floor is drawn on its own; nothing from the floor above or below shows through.
+
+Everyone in the lobby installs the mod. Someone without it stands where the car docks and the host tumbles them up, the way the game pulls a player out of the void, but they see no car and cannot ride it.
 
 Where the elevator stands:
 
@@ -48,9 +52,8 @@ The game does not always roll those rooms, and when it does not you get the plai
 
 ## Known rough edges
 
-- The map shows the floor you are on. Late joiners may see both floors' room outlines on one layer for that level.
+- The map's player dot only shows on the floor you are on; scroll to another floor and it goes until you scroll back.
 - Outside the Museum the shaft is a plain dark box built around the path, since the level has nothing between the floors. The car and buttons are the game's own Museum assets, so they look the same on every map.
-- The Museum elevator car stays stuck where the game left it. The lift pad is in the corridor at the shaft mouth, not inside the car.
 - Levels from other mods work as long as they use the game's normal room lists.
 
 ## Vippy

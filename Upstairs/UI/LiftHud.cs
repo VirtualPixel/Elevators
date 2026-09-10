@@ -73,8 +73,8 @@ namespace Upstairs.UI
             float rise = flat.y;
             flat.y = 0f;
             float distance = flat.magnitude;
-            if (Map.Instance != null && Map.Instance.Active && Patches.MapFloorsPatch.ViewingName.Length > 0)
-                return $"MAP  {Patches.MapFloorsPatch.ViewingName}, scroll for the other floors";
+            if (Map.Instance != null && Map.Instance.Active)
+                return string.Empty;
             string look = Elevator.LookingAt();
             if (look.Length > 0)
                 return look == "call" ? "ELEVATOR  grab to call it" : look.EndsWith("hatch") ? $"ELEVATOR  grab to {look}" : $"ELEVATOR  grab: {look}";

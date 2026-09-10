@@ -282,6 +282,27 @@ namespace Upstairs.Services
         }
 
         internal int FloorCount => Floors().Count;
+
+        // What the map calls a floor. A shaft room's lower stop is that floor's sub floor.
+        internal string MapFloorName(int index)
+        {
+            List<(int layer, string name)> floors = Floors();
+            if (floors.Count == 0)
+                return "";
+            string name = floors[Mathf.Clamp(index, 0, floors.Count - 1)].name;
+            bool sub = name.EndsWith(" sub");
+            string main = sub ? name.Substring(0, name.Length - 4) : name;
+            string title = main switch
+            {
+                "ground" => sub ? "SUB FLOOR" : "GROUND FLOOR",
+                "upstairs" => sub ? "UPPER SUB FLOOR" : "UPPER FLOOR",
+                "basement" => sub ? "BASEMENT SUB FLOOR" : "BASEMENT",
+                _ => main.ToUpperInvariant()
+            };
+            return title;
+        }
+
+        internal int FloorIndexOfHeight(float y) => FloorIndexOfLayer(Mathf.FloorToInt((y + 0.1f) / 4f));
         internal int FloorLayer(int index) => Floors()[Mathf.Clamp(index, 0, Floors().Count - 1)].layer;
         internal string FloorName(int index) => Floors()[Mathf.Clamp(index, 0, Floors().Count - 1)].name;
 
