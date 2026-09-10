@@ -587,6 +587,7 @@ namespace Upstairs.Services
             queued = -1;
             pursuers.Clear();
             lastRide.Clear();
+            lostTicks.Clear();
             hatch = null;
             hatchOpen = 0f;
             hatchWantOpen = false;
@@ -636,7 +637,10 @@ namespace Upstairs.Services
                 Attach(waiting);
             SpawnButtons();
             if (SemiFunc.IsMasterClientOrSingleplayer())
+            {
                 Plugin.Instance.StartCoroutine(Patrols());
+                Plugin.Instance.StartCoroutine(RescueMonsters());
+            }
             Plugin.LogInfo($"[Elevator] car at {docks[ground].Name}, {docks.Count} docks");
         }
 
@@ -1105,6 +1109,14 @@ namespace Upstairs.Services
             wall.transform.localRotation = turn * Quaternion.Euler(0f, 180f, 0f);
             wall.transform.localScale = new Vector3(5.2f, to - from, 1f);
             wall.GetComponent<Renderer>().sharedMaterial = shaftMaterial;
+            // A solid wall behind the face, so a flying head that follows the car into the shaft
+            // stays in the shaft and a player never leaves it sideways.
+            var solid = new GameObject("shaft wall");
+            solid.transform.SetParent(shaft, false);
+            solid.transform.localPosition = turn * new Vector3(0f, 0f, 2.75f) + Vector3.up * ((from + to) * 0.5f - mid);
+            solid.transform.localRotation = turn;
+            var box = solid.AddComponent<BoxCollider>();
+            box.size = new Vector3(5.6f, to - from, 0.3f);
         }
 
         // The bottom of the shaft is the game's own death pit, borrowed from the Museum elevator
@@ -1883,6 +1895,57 @@ namespace Upstairs.Services
                     hi = mid;
             }
             travelT = (lo + hi) * 0.5f;
+        }
+
+        // A monster that has spent a few seconds outside every room and outside the car is in
+        // the void, a head that chased a rider down the shaft say. It goes back to the nearest
+        // path point on the floor it is closest to.
+        private static readonly Dictionary<EnemyParent, int> lostTicks = new Dictionary<EnemyParent, int>();
+
+        private static System.Collections.IEnumerator RescueMonsters()
+        {
+            int rooms = LayerMask.GetMask("RoomVolume");
+            while (car != null)
+            {
+                yield return new WaitForSeconds(2f);
+                if (car == null || EnemyDirector.instance == null || !SemiFunc.IsMasterClientOrSingleplayer() || LevelGenerator.Instance == null)
+                    continue;
+                foreach (EnemyParent parent in EnemyDirector.instance.enemiesSpawned)
+                {
+                    if (parent == null || !parent.Spawned || parent.Enemy == null)
+                        continue;
+                    Vector3 at = parent.Enemy.transform.position;
+                    bool inRoom = Physics.CheckSphere(at + Vector3.up * 0.5f, 0.4f, rooms, QueryTriggerInteraction.Collide);
+                    if (inRoom || IsInside(at))
+                    {
+                        lostTicks.Remove(parent);
+                        continue;
+                    }
+                    lostTicks.TryGetValue(parent, out int ticks);
+                    ticks++;
+                    lostTicks[parent] = ticks;
+                    if (ticks < 3)
+                        continue;
+                    lostTicks.Remove(parent);
+                    LevelPoint? best = null;
+                    float bestD = float.MaxValue;
+                    foreach (LevelPoint point in LevelGenerator.Instance.LevelPathPoints)
+                    {
+                        if (point == null || (point.Room != null && point.Room.Truck))
+                            continue;
+                        float d = Vector3.Distance(point.transform.position, at) + Mathf.Abs(point.transform.position.y - at.y) * 2f;
+                        if (d < bestD)
+                        {
+                            bestD = d;
+                            best = point;
+                        }
+                    }
+                    if (best == null)
+                        continue;
+                    parent.Enemy.EnemyTeleported(best.transform.position);
+                    Plugin.LogInfo($"[Elevator] {parent.enemyName} was outside the level and is back in it");
+                }
+            }
         }
 
         // The shaft carries the sound to every dock: anything near one comes to look, and the
