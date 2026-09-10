@@ -21,7 +21,6 @@ namespace Upstairs.Configuration
         public static ConfigEntry<string> AvoidRooms = null!;
         public static ConfigEntry<float> LiftCooldown = null!;
         public static ConfigEntry<bool> VoidRescue = null!;
-        public static ConfigEntry<bool> ShowLiftHint = null!;
         public static ConfigEntry<VerbosityLevel> LoggingLevel = null!;
 
         public static void Init(ConfigFile config)
@@ -40,9 +39,9 @@ namespace Upstairs.Configuration
                 "Rooms on each new floor, as a percent of the rooms on the ground floor.",
                 new AcceptableValueRange<int>(20, 100)));
 
-            ExtraLoot = config.Bind("Floors", "ExtraLoot", 50, new ConfigDescription(
+            ExtraLoot = config.Bind("Floors", "ExtraLoot", 30, new ConfigDescription(
                 "Valuables on the new floors, as a percent of what the ground floor gets. The ground floor keeps its normal amount, " +
-                "these are on top, and the quota grows with them like any other valuable.",
+                "these are on top, and the quota grows with them like any other valuable. Kept modest so a level with floors is a bigger building, not a jackpot; other loot mods stack on top of this.",
                 new AcceptableValueRange<int>(0, 150)));
 
             EnemiesOnNewFloors = config.Bind("Floors", "EnemiesOnNewFloors", true,
@@ -58,9 +57,6 @@ namespace Upstairs.Configuration
             LiftCooldown = config.Bind("Lift", "LiftCooldown", 4f, new ConfigDescription(
                 "Seconds before the same player can ride the lift again.",
                 new AcceptableValueRange<float>(1f, 15f)));
-
-            ShowLiftHint = config.Bind("Lift", "ShowLiftHint", true,
-                "A line at the bottom of the HUD with the distance and direction to the nearest lift pad. Only the host sees it.");
 
             VoidRescue = config.Bind("Lift", "VoidRescue", true,
                 "A player who spends a couple of seconds outside every room, on a roof between floors say, gets lifted back to the ground pad.");

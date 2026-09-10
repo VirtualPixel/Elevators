@@ -11,7 +11,7 @@ First release.
 - Monsters follow you upstairs by the game's own respawn shuffle, an elevator leaving or landing draws whatever is nearby to the shaft, and one that had you in its sights when the doors shut turns up on your new floor a little later. Every so often an idle monster rides the elevator to another floor, and every dock carries the shaft's sound so you hear it coming.
 - Call opens the doors when the car is there, a second press mid-trip queues the next floor, and a press the car can't honour gets the upgrade stand's refusal.
 - Optional basement (crouch on the lift to go down).
-- The ground floor keeps its normal loot; the new floors get their own share on top. The quota grows with it like any other valuable.
+- The ground floor keeps its normal loot; the new floors get a modest share on top (30 percent by default). The quota grows with it like any other valuable.
 - Monsters keep to the ground floor unless you say otherwise.
 - The gap between floors is measured per level from the tallest and deepest rooms, so nothing pokes through. End up outside every room and the lift catches you.
 - A HUD line pointing at the nearest elevator, for everyone with the mod.
