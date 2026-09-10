@@ -855,19 +855,26 @@ namespace Upstairs.Services
         private static void SoftDoor(Transform door)
         {
             int playerOnly = LayerMask.NameToLayer("PlayerOnlyCollision");
-            if (playerOnly < 0)
-                return;
-            foreach (Collider c in door.GetComponentsInChildren<Collider>(true))
-                c.gameObject.layer = playerOnly;
             MeshFilter filter = door.GetComponent<MeshFilter>();
-            if (filter == null || filter.sharedMesh == null)
+            if (playerOnly < 0 || filter == null || filter.sharedMesh == null)
                 return;
+            // The door's own colliders sit on its rendered object, and that layer is not drawn,
+            // so the blocking moves to children of its own.
+            foreach (Collider c in door.GetComponentsInChildren<Collider>(true))
+                c.enabled = false;
+            Bounds b = filter.sharedMesh.bounds;
+            var wall = new GameObject("players");
+            wall.transform.SetParent(door, false);
+            wall.layer = playerOnly;
+            var wallBox = wall.AddComponent<BoxCollider>();
+            wallBox.center = b.center;
+            wallBox.size = b.size;
             var shut = new GameObject("shut");
             shut.transform.SetParent(door, false);
             shut.layer = 0;
             var box = shut.AddComponent<BoxCollider>();
-            box.center = filter.sharedMesh.bounds.center;
-            box.size = filter.sharedMesh.bounds.size;
+            box.center = b.center;
+            box.size = b.size;
             // Doors are built shut.
             box.enabled = true;
             shutBoxes.Add((door, box));
@@ -972,15 +979,19 @@ namespace Upstairs.Services
                 foreach (Collider c in plate.GetComponentsInChildren<Collider>(true))
                     Object.Destroy(c);
                 Bounds b = plateMesh.sharedMesh.bounds;
-                // The plate faces -x where the Museum hangs it; here it faces the panel's +z.
+                // The plate is thin along z with its face toward -z, the room side where the Museum
+                // hangs it. Turned about to face the panel's +z, its face flush with the panel plane,
+                // so the buttons and their words stand proud of it.
                 var pivot = new GameObject("Upstairs panel").transform;
                 pivot.SetParent(parent, false);
                 pivot.localPosition = localPos;
                 pivot.localRotation = localRot;
                 plate.transform.SetParent(pivot, false);
-                plate.transform.localRotation = Quaternion.Euler(0f, 90f, 0f);
-                plate.transform.localScale = new Vector3(1f, height / Mathf.Max(0.01f, b.size.y), 0.28f / Mathf.Max(0.01f, b.size.z));
-                plate.transform.localPosition = Quaternion.Euler(0f, 90f, 0f) * new Vector3(-b.center.x, -b.center.y * plate.transform.localScale.y, -b.center.z * plate.transform.localScale.z);
+                plate.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+                float sy = height / Mathf.Max(0.01f, b.size.y);
+                plate.transform.localScale = new Vector3(0.28f / Mathf.Max(0.01f, b.size.x), sy, 1f);
+                float front = -(b.center.z - b.extents.z);
+                plate.transform.localPosition = new Vector3(0f, -b.center.y * sy, -front);
             }
             else
             {
