@@ -86,6 +86,9 @@ namespace UpstairsProbe
                     log.LogInfo($"[Probe] {levelName}: no lift site this roll, rolling again");
                     continue;
                 }
+                // Monsters hear the elevator now; the tester stands in it and must survive that.
+                if (PlayerAvatar.instance != null && PlayerAvatar.instance.playerHealth != null)
+                    PlayerAvatar.instance.playerHealth.godMode = true;
                 Report(levelName);
                 OpeningScan(levelName);
                 yield return MapCheck(levelName);
@@ -372,6 +375,22 @@ namespace UpstairsProbe
                 bool hit = Physics.Raycast(b.transform.position + axis * 0.8f, -axis, out RaycastHit h, 1.5f, ~0, QueryTriggerInteraction.Ignore);
                 log.LogInfo($"[Probe] {name} ray at {b.Kind}/{b.Dock}: hit={(hit ? h.transform.name : "nothing")} static={(hit && h.transform.GetComponent<StaticGrabObject>() != null)} rb={(hit && h.rigidbody != null ? h.rigidbody.name : "none")}");
             }
+            // The call button at the dock the car stands on opens the doors.
+            Elevator.LiftButton? callHere = null;
+            foreach (Elevator.LiftButton b in Object.FindObjectsOfType<Elevator.LiftButton>())
+                if (b.Kind == Elevator.ButtonKind.Call && b.Dock == Elevator.CurrentDock && b.Attached) { callHere = b; break; }
+            if (callHere != null && me.physGrabber != null)
+            {
+                log.LogInfo($"[Probe] {name} before call: {Elevator.DoorState()}");
+                StaticGrabObject cg = callHere.GetComponent<StaticGrabObject>();
+                cg.GrabStarted(me.physGrabber);
+                yield return new WaitForSecondsRealtime(0.4f);
+                cg.GrabEnded(me.physGrabber);
+                yield return new WaitForSecondsRealtime(1.5f);
+                log.LogInfo($"[Probe] {name} CALL OPENS {(Elevator.DoorOpenAmount > 0.5f ? "ok" : "FAIL")}: {Elevator.DoorState()}");
+                yield return new WaitForSecondsRealtime(5f);
+                log.LogInfo($"[Probe] {name} after hold: {Elevator.DoorState()}");
+            }
             Elevator.LiftButton? upButton = Elevator.FindButton(Elevator.ButtonKind.Up);
             log.LogInfo($"[Probe] {name} pressing up (dock {upDock}) by grabbing={(upButton != null)}, inside={Elevator.IsInside(me.transform.position)} at={me.transform.position} dock={ground}");
             if (upButton != null && me.physGrabber != null)
@@ -429,6 +448,11 @@ namespace UpstairsProbe
         // How far the rider and any cargo stray from the car floor while it moves.
         private IEnumerator RideTelemetry(string name, PlayerAvatar me, string what, ValuableObject? cargo = null)
         {
+            if (me == null || PlayerController.instance == null)
+            {
+                log.LogWarning($"[Probe] {name} RIDE {what}: the player is gone, the level must have changed");
+                yield break;
+            }
             float riderMin = 99f, riderMax = -99f, cargoMin = 99f, cargoMax = -99f, prev = float.NaN, jitter = 0f, camMin = 99f, camMax = -99f;
             int samples = 0;
             float waited = 0f;

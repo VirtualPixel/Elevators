@@ -836,8 +836,8 @@ namespace Upstairs.Services
             landing.transform.SetPositionAndRotation(dock.Position + Vector3.up * FloorOffset, Quaternion.Euler(0f, dock.Yaw, 0f));
             dock.LandingL = CopyDoor(carriageAsset.transform, "Museum Elevator door (1)", landing.transform);
             dock.LandingR = CopyDoor(carriageAsset.transform, "Museum Elevator door", landing.transform);
-            if (dock.LandingL != null) { dock.LandingClosedL = ClosedAt(dock.LandingL, left: true) + Vector3.back * 0.18f; dock.LandingL.localPosition = dock.LandingClosedL; }
-            if (dock.LandingR != null) { dock.LandingClosedR = ClosedAt(dock.LandingR, left: false) + Vector3.back * 0.18f; dock.LandingR.localPosition = dock.LandingClosedR; }
+            if (dock.LandingL != null) { dock.LandingClosedL = ClosedAt(dock.LandingL, left: true, recess: true); dock.LandingL.localPosition = dock.LandingClosedL; }
+            if (dock.LandingR != null) { dock.LandingClosedR = ClosedAt(dock.LandingR, left: false, recess: true); dock.LandingR.localPosition = dock.LandingClosedR; }
         }
 
         private static Transform? CopyDoor(Transform carriage, string name, Transform parent)
@@ -1966,6 +1966,9 @@ namespace Upstairs.Services
             Dock? d = docks.Find(x => x.Name == name);
             return d != null ? d.Landing : Vector3.zero;
         }
+
+        internal static float DoorOpenAmount => doorOpen;
+        internal static string DoorState() => $"open={doorOpen:0.00} held={doorsHeld} hold={openHold:0.0} land={landWait:0.0} at={atDock} to={toDock}";
 
         internal static string HumStatus() => hum == null ? "no hum" : $"playing={hum.isPlaying} vol={hum.volume:0.00} clip={(hum.clip != null ? hum.clip.name : "none")} group={(hum.outputAudioMixerGroup != null ? hum.outputAudioMixerGroup.name : "none")} active={hum.gameObject.activeInHierarchy}";
 
