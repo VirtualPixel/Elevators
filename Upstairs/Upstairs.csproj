@@ -61,6 +61,10 @@
       <HintPath>$(RepoManagedDir)/Photon3Unity3D.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Unity.AI.Navigation">
+      <HintPath>$(RepoManagedDir)/Unity.AI.Navigation.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine.UI">
       <HintPath>$(RepoManagedDir)/UnityEngine.UI.dll</HintPath>
       <Private>false</Private>

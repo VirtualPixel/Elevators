@@ -2,6 +2,8 @@ using System.Collections.Generic;
 using Photon.Pun;
 using REPOLib.Modules;
 using UnityEngine;
+using UnityEngine.AI;
+using Unity.AI.Navigation;
 using Upstairs.UI;
 using Upstairs.Configuration;
 
@@ -144,7 +146,7 @@ namespace Upstairs.Services
         private const float LandPause = 0.9f;
         private static Sound? landThud;
         private static float openHold;
-        private const float OpenHoldTime = 4f;
+        private const float OpenHoldTime = 6f;
         // A press made mid-trip: the car carries on to that dock after it lands, doors shut.
         private static int queued = -1;
         private static Vector3 lastCarPos;
@@ -575,7 +577,7 @@ namespace Upstairs.Services
                 Object.Destroy(car.transform.parent != null ? car.transform.parent.gameObject : car);
             foreach (GameObject g in GameObject.FindGameObjectsWithTag("Untagged"))
             {
-                if (g.name == "Upstairs dock" || g.name == "Upstairs shaft")
+                if (g.name == "Upstairs dock" || g.name == "Upstairs shaft" || g.name == "Upstairs shaft dressing")
                     Object.Destroy(g);
             }
             car = null;
@@ -588,6 +590,10 @@ namespace Upstairs.Services
             pursuers.Clear();
             lastRide.Clear();
             lostTicks.Clear();
+            aboard.Clear();
+            foreach (NavMeshObstacle block in dockBlocks)
+                if (block != null) Object.Destroy(block.gameObject);
+            dockBlocks.Clear();
             hatch = null;
             hatchOpen = 0f;
             hatchWantOpen = false;
@@ -632,12 +638,15 @@ namespace Upstairs.Services
                 Plugin.LogInfo($"[Elevator] under the {docks[i].Name} dock: {under}");
             }
             BuildShaft();
+            DressShaft();
+            BuildMapDoors();
             BuildSpeakers();
             foreach (LiftButton waiting in loose.ToArray())
                 Attach(waiting);
             SpawnButtons();
             if (SemiFunc.IsMasterClientOrSingleplayer())
             {
+                Plugin.Instance.StartCoroutine(JoinNavMesh());
                 Plugin.Instance.StartCoroutine(Patrols());
                 Plugin.Instance.StartCoroutine(RescueMonsters());
             }
@@ -1100,6 +1109,114 @@ namespace Upstairs.Services
             BuildPit(new Vector3(centre.x, bottom + 1.5f, centre.z), facing);
         }
 
+        // The Museum's own shaft walls and pipes, stacked the length of the shaft, so a look
+        // through a crack shows brick and pipework and a fall out of the car has walls to hit.
+        // The shaft group in the module spans forty metres around its floor; copies go up in
+        // forty metre steps. Front tiles at a dock give way to the doorway, and wherever a Museum
+        // room already has its own shaft, nothing is doubled.
+        private static void DressShaft()
+        {
+            GameObject? group = FindAsset("Elevator");
+            Transform? walls = group != null ? group.transform.Find("Walls") : null;
+            Transform? pipes = group != null ? group.transform.Find("Pipes") : null;
+            if (walls == null && pipes == null)
+                return;
+            var sorted = new List<Dock>(docks);
+            sorted.Sort((a, b) => a.Position.y.CompareTo(b.Position.y));
+            Dock low = sorted[0];
+            Dock high = sorted[sorted.Count - 1];
+            float bottom = low.Position.y - ShaftBelow;
+            float top = high.Position.y + 4.8f;
+            Quaternion facing = Quaternion.Euler(0f, low.Yaw, 0f);
+            var holder = new GameObject("Upstairs shaft dressing").transform;
+            int tiles = 0;
+            for (float y0 = bottom + 20f; y0 - 20f < top; y0 += 40f)
+            {
+                foreach (Transform? part in new[] { walls, pipes })
+                {
+                    if (part == null)
+                        continue;
+                    GameObject copy = Object.Instantiate(part.gameObject, holder);
+                    StripScripts(copy);
+                    copy.transform.SetPositionAndRotation(new Vector3(low.Position.x, y0, low.Position.z), facing);
+                    // Tiles sit directly under the group and under its floor groups; each one is
+                    // judged by where it stands in the shaft's frame.
+                    var pieces = new List<Transform>();
+                    foreach (Transform child in copy.transform)
+                    {
+                        if (child.GetComponentInChildren<Renderer>(true) == null)
+                            continue;
+                        if (child.name.StartsWith("FLOOR"))
+                            foreach (Transform grand in child) pieces.Add(grand);
+                        else
+                            pieces.Add(child);
+                    }
+                    foreach (Transform piece in pieces)
+                    {
+                        float y = piece.position.y;
+                        Vector3 inShaft = copy.transform.InverseTransformPoint(piece.position);
+                        bool keep = y >= bottom - 0.5f && y < top;
+                        if (keep && inShaft.z < -1f)
+                        {
+                            // The front row: open at every dock, and its own doorway pieces never.
+                            if (piece.name.Contains("Door"))
+                                keep = false;
+                            foreach (Dock d in docks)
+                                if (y > d.Position.y - 0.5f && y < d.Position.y + 3.5f) keep = false;
+                        }
+                        if (keep)
+                        {
+                            foreach (Dock d in docks)
+                                if (d.InShaft && y >= d.Position.y - 20.5f && y < d.Position.y + 16.5f) keep = false;
+                        }
+                        piece.gameObject.SetActive(keep);
+                        if (keep) tiles++;
+                    }
+                }
+            }
+            // Dim service lights up the back wall.
+            for (float y = bottom + 6f; y < top; y += 12f)
+            {
+                var lamp = new GameObject("shaft light").AddComponent<Light>();
+                lamp.transform.SetParent(holder, false);
+                lamp.transform.position = new Vector3(low.Position.x, y, low.Position.z) + facing * new Vector3(2.1f, 0f, 3.1f);
+                lamp.type = LightType.Point;
+                lamp.color = new Color(1f, 0.82f, 0.6f);
+                lamp.intensity = 0.7f;
+                lamp.range = 7f;
+                lamp.shadows = LightShadows.None;
+            }
+            Plugin.LogInfo($"[Elevator] shaft dressed with {tiles} Museum pieces");
+        }
+
+        // The map marks the elevator doorway at every dock the way it marks a door, in its own
+        // colour.
+        private static readonly Color MapDoorTint = new Color(1f, 0.62f, 0.2f);
+
+        private static void BuildMapDoors()
+        {
+            Map map = Map.Instance;
+            if (map == null || map.Door1x1Object == null)
+                return;
+            foreach (Dock dock in docks)
+            {
+                MapLayer layer = map.GetLayerParent(dock.Position.y);
+                if (layer == null)
+                    continue;
+                Quaternion facing = Quaternion.Euler(0f, dock.Yaw, 0f);
+                Vector3 at = dock.Position + facing * new Vector3(0f, 0f, -1.5f);
+                GameObject go = Object.Instantiate(map.Door1x1Object, layer.transform);
+                go.name = "Upstairs map door";
+                go.transform.position = at * map.Scale + layer.transform.position + map.GetLayerPosition(layer.layer);
+                go.transform.rotation = facing;
+                foreach (Renderer r in go.GetComponentsInChildren<Renderer>(true))
+                {
+                    if (r.material != null && r.material.HasProperty("_Color"))
+                        r.material.color = MapDoorTint;
+                }
+            }
+        }
+
         private static void Piece(Transform shaft, Quaternion turn, float from, float to, float mid)
         {
             if (to - from < 0.3f)
@@ -1278,6 +1395,7 @@ namespace Upstairs.Services
             if (car == null || Moving || dock < 0 || dock >= docks.Count || dock == atDock)
                 return false;
             NotePursuers();
+            NoteAboard();
             UpstairsNet.SendRide(atDock, dock);
             return true;
         }
@@ -1580,6 +1698,7 @@ namespace Upstairs.Services
 
             if (!Moving)
                 localRiding = false;
+            UpdateDockBlocks();
             // The camera eases after the body and at eight metres a second sits half a metre
             // behind it, which reads as sinking through the floor or floating off it. While the
             // car carries you, it follows tight.
@@ -1691,7 +1810,10 @@ namespace Upstairs.Services
                 // The whole building hears an elevator land.
                 HearTheShaft();
                 if (queued < 0)
+                {
                     SendPursuers(next - Vector3.up * FloorOffset);
+                    LandAboard(atDock);
+                }
             }
         }
 
@@ -1916,7 +2038,7 @@ namespace Upstairs.Services
                         continue;
                     Vector3 at = parent.Enemy.transform.position;
                     bool inRoom = Physics.CheckSphere(at + Vector3.up * 0.5f, 0.4f, rooms, QueryTriggerInteraction.Collide);
-                    if (inRoom || IsInside(at))
+                    if (inRoom || IsInside(at) || aboard.Contains(parent))
                     {
                         lostTicks.Remove(parent);
                         continue;
@@ -1948,41 +2070,148 @@ namespace Upstairs.Services
             }
         }
 
+        // The car floor joins the level's navmesh at every dock, so a monster can walk in after
+        // you. Bake-only floors stand in for the car during one navmesh update and then go; a
+        // carving obstacle closes each dock's patch while the car is elsewhere, so nothing paths
+        // out over the open shaft.
+        private static readonly List<NavMeshObstacle> dockBlocks = new List<NavMeshObstacle>();
+        private static readonly List<EnemyParent> aboard = new List<EnemyParent>();
+
+        private static System.Collections.IEnumerator JoinNavMesh()
+        {
+            LevelGenerator lg = LevelGenerator.Instance;
+            NavMeshSurface? surface = lg != null ? lg.GetComponent<NavMeshSurface>() : null;
+            if (surface == null || surface.navMeshData == null)
+            {
+                Plugin.LogInfo("[Elevator] no navmesh surface to join, monsters stay out of the car");
+                yield break;
+            }
+            Plugin.LogInfo($"[Elevator] navmesh surface collects {surface.collectObjects} by {surface.useGeometry}, layers {surface.layerMask.value}, agent {surface.agentTypeID}");
+            var stands = new List<GameObject>();
+            foreach (Dock dock in docks)
+            {
+                Quaternion facing = Quaternion.Euler(0f, dock.Yaw, 0f);
+                // From a step inside the room through the doorway to the back of the car, at floor
+                // height, parented under the surface so a children-only collection sees it.
+                GameObject stand = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                stand.name = "Upstairs car floor";
+                stand.transform.SetParent(surface.transform, false);
+                stand.transform.SetPositionAndRotation(dock.Position + facing * new Vector3(0f, -0.1f, -0.2f), facing);
+                stand.transform.localScale = new Vector3(cageHalfWidth * 2f - 0.2f, 0.2f, cageHalfWidth * 2f + 1.6f);
+                stand.layer = 0;
+                // The surface only collects what carries a modifier.
+                var modifier = stand.AddComponent<NavMeshModifier>();
+                modifier.overrideArea = false;
+                Renderer r = stand.GetComponent<Renderer>();
+                r.enabled = surface.useGeometry == NavMeshCollectGeometry.RenderMeshes;
+                r.sharedMaterial = shaftMaterial;
+                stands.Add(stand);
+
+                var block = new GameObject("Upstairs dock block");
+                block.transform.SetPositionAndRotation(dock.Position + facing * new Vector3(0f, 1f, 0.3f), facing);
+                var obstacle = block.AddComponent<NavMeshObstacle>();
+                obstacle.shape = NavMeshObstacleShape.Box;
+                obstacle.size = new Vector3(cageHalfWidth * 2f + 0.4f, 2f, cageHalfWidth * 2f + 1.2f);
+                obstacle.carving = true;
+                obstacle.carveOnlyStationary = false;
+                obstacle.enabled = false;
+                dockBlocks.Add(obstacle);
+            }
+            yield return null;
+            AsyncOperation update = surface.UpdateNavMesh(surface.navMeshData);
+            while (!update.isDone)
+                yield return null;
+            foreach (GameObject stand in stands)
+                Object.Destroy(stand);
+            bool onMesh = docks.Count > 0 && NavMesh.SamplePosition(docks[0].Position, out _, 0.6f, NavMesh.AllAreas);
+            Plugin.LogInfo($"[Elevator] car floor joined the navmesh at {docks.Count} docks, first dock on mesh: {onMesh}");
+        }
+
+        // Every dock's patch is closed except the one the car stands at.
+        private static void UpdateDockBlocks()
+        {
+            for (int i = 0; i < dockBlocks.Count && i < docks.Count; i++)
+            {
+                bool open = i == atDock && !Moving;
+                if (dockBlocks[i] != null && dockBlocks[i].enabled == open)
+                    dockBlocks[i].enabled = !open;
+            }
+        }
+
+        // Monsters in the car when it leaves ride with it: they are set down at the landing when
+        // the doors open again. Their own pathing can't follow the floor, so they are moved.
+        private static void NoteAboard()
+        {
+            aboard.Clear();
+            if (EnemyDirector.instance == null || !SemiFunc.IsMasterClientOrSingleplayer())
+                return;
+            foreach (EnemyParent parent in EnemyDirector.instance.enemiesSpawned)
+            {
+                if (parent != null && parent.Spawned && parent.Enemy != null && IsInside(parent.Enemy.transform.position))
+                    aboard.Add(parent);
+            }
+            if (aboard.Count > 0)
+                Plugin.LogInfo($"[Elevator] {aboard.Count} monster(s) aboard");
+        }
+
+        private static void LandAboard(int dock)
+        {
+            if (aboard.Count == 0 || dock < 0 || dock >= docks.Count)
+                return;
+            foreach (EnemyParent parent in aboard)
+            {
+                if (parent == null || !parent.Spawned || parent.Enemy == null)
+                    continue;
+                parent.Enemy.EnemyTeleported(docks[dock].Landing);
+                Plugin.LogInfo($"[Elevator] {parent.enemyName} stepped out with the riders at {docks[dock].Name}");
+            }
+            aboard.Clear();
+        }
+
         // The shaft carries the sound to every dock: anything near one comes to look, and the
         // Huntsman, who hunts by ear, hears it from anywhere on his floor.
         private static void HearTheShaft()
         {
             if (EnemyDirector.instance == null || !SemiFunc.IsMasterClientOrSingleplayer())
                 return;
-            foreach (Dock dock in docks)
-                EnemyDirector.instance.SetInvestigate(dock.Landing, 20f);
+            // Each monster is sent to the dock on its own floor only: a point on another floor has
+            // no path, and the game's own investigate code falls over on an empty one.
             foreach (EnemyParent parent in EnemyDirector.instance.enemiesSpawned)
             {
                 if (parent == null || !parent.Spawned || parent.Enemy == null || !parent.Enemy.HasStateInvestigate)
                     continue;
-                if (parent.Enemy.GetComponentInChildren<EnemyHunter>(true) == null)
-                    continue;
-                int dock = NearestDock(parent.Enemy.transform.position, 200f);
+                bool hunter = parent.Enemy.GetComponentInChildren<EnemyHunter>(true) != null;
+                int dock = NearestDock(parent.Enemy.transform.position, hunter ? 200f : 20f);
                 if (dock >= 0)
                     parent.Enemy.StateInvestigate.Set(docks[dock].Landing, false);
             }
         }
 
-        // Anyone standing in the door line, inside or just outside the car.
+        // Anyone, or anything, standing in the door line, inside or just outside the car.
         private static bool DoorwayBlocked()
         {
             if (car == null)
                 return false;
-            Transform frame = car.transform.parent;
             foreach (PlayerAvatar player in SemiFunc.PlayerGetAll())
             {
-                if (player == null || player.isDisabled)
-                    continue;
-                Vector3 local = frame.InverseTransformPoint(player.transform.position);
-                if (Mathf.Abs(local.x) < cageHalfWidth && local.z > -2.3f && local.z < -0.8f && local.y > -FloorOffset - 0.6f && local.y < 2.5f)
+                if (player != null && !player.isDisabled && InDoorway(player.transform.position))
                     return true;
             }
+            if (EnemyDirector.instance != null)
+            {
+                foreach (EnemyParent parent in EnemyDirector.instance.enemiesSpawned)
+                {
+                    if (parent != null && parent.Spawned && parent.Enemy != null && InDoorway(parent.Enemy.transform.position))
+                        return true;
+                }
+            }
             return false;
+        }
+
+        private static bool InDoorway(Vector3 pos)
+        {
+            Vector3 local = car!.transform.parent.InverseTransformPoint(pos);
+            return Mathf.Abs(local.x) < cageHalfWidth && local.z > -2.6f && local.z < -0.6f && local.y > -FloorOffset - 0.6f && local.y < 2.5f;
         }
 
         // The next stop up or down. A shaft room's sub floor is a side stop: down from its own

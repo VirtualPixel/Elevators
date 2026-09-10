@@ -391,6 +391,8 @@ namespace UpstairsProbe
                 yield return new WaitForSecondsRealtime(5f);
                 log.LogInfo($"[Probe] {name} after hold: {Elevator.DoorState()}");
             }
+            yield return new WaitForSecondsRealtime(3f);
+            NavCheck(name, "car docked here", ground, expectPath: true);
             Elevator.LiftButton? upButton = Elevator.FindButton(Elevator.ButtonKind.Up);
             log.LogInfo($"[Probe] {name} pressing up (dock {upDock}) by grabbing={(upButton != null)}, inside={Elevator.IsInside(me.transform.position)} at={me.transform.position} dock={ground}");
             if (upButton != null && me.physGrabber != null)
@@ -414,6 +416,8 @@ namespace UpstairsProbe
             log.LogInfo($"[Probe] {name} hum after ride: {Elevator.HumStatus()}");
             yield return new WaitForSecondsRealtime(1f);
             Verdict(name, "ELEVATOR UP", me.transform.position, up);
+            NavCheck(name, "car gone from here", ground, expectPath: false);
+            NavCheck(name, "car docked upstairs", up, expectPath: true);
             // Something loose rides down with us: a small valuable dropped by the panel.
             ValuableObject? cargo = null;
             foreach (ValuableObject v in Object.FindObjectsOfType<ValuableObject>())
@@ -478,6 +482,24 @@ namespace UpstairsProbe
                 samples++;
             }
             log.LogInfo($"[Probe] {name} RIDE {what} interp player={PlayerController.instance.rb.interpolation} samples={samples} rider above floor min={riderMin:0.00} max={riderMax:0.00} stepJitter={jitter:0.000} camAboveBody={camMin:0.00}..{camMax:0.00}{(cargo != null ? $" cargo min={cargoMin:0.00} max={cargoMax:0.00} inside={Elevator.IsInside(cargo.transform.position)}" : "")}");
+        }
+
+        // Can a monster path from the landing into the car floor at this dock?
+        private void NavCheck(string name, string what, Vector3 dock, bool expectPath)
+        {
+            Vector3 landing = Elevator.LandingOf(DockNamed(dock) ?? "");
+            if (landing == Vector3.zero) landing = dock + Vector3.forward * -2.5f;
+            bool onMesh = NavMesh.SamplePosition(dock, out NavMeshHit hit, 0.6f, NavMesh.AllAreas);
+            var path = new NavMeshPath();
+            bool ok = NavMesh.SamplePosition(landing, out NavMeshHit from, 1f, NavMesh.AllAreas) && onMesh && NavMesh.CalculatePath(from.position, hit.position, NavMesh.AllAreas, path) && path.status == NavMeshPathStatus.PathComplete;
+            log.LogInfo($"[Probe] {name} NAV {what}: floorOnMesh={onMesh} pathComplete={ok} {(ok == expectPath ? "ok" : "FAIL")}");
+        }
+
+        private static string? DockNamed(Vector3 pos)
+        {
+            foreach ((Vector3 p, float yaw, string n) in Elevator.DockList())
+                if (Vector3.Distance(p, pos) < 1f) return n;
+            return null;
         }
 
         private static int DockNamed(string name)
