@@ -723,11 +723,10 @@ namespace Upstairs.Services
                 landing.transform.SetPositionAndRotation(dock.Position + Vector3.up * FloorOffset, Quaternion.Euler(0f, dock.Yaw, 0f));
                 dock.LandingL = CopyDoor(carriage, "Museum Elevator door (1)", landing.transform);
                 dock.LandingR = CopyDoor(carriage, "Museum Elevator door", landing.transform);
-                // A hair in front of the car's own doors so the two pairs never share a plane, but
-                // still inside the wall, so an open door slides behind the frame and not across
+                // Recessed inside the wall, so an open door slides behind the frame and not across
                 // the wall plate and its button.
-                if (dock.LandingL != null) { dock.LandingClosedL = ClosedAt(dock.LandingL, left: true) + Vector3.back * 0.05f; dock.LandingL.localPosition = dock.LandingClosedL; }
-                if (dock.LandingR != null) { dock.LandingClosedR = ClosedAt(dock.LandingR, left: false) + Vector3.back * 0.05f; dock.LandingR.localPosition = dock.LandingClosedR; }
+                if (dock.LandingL != null) { dock.LandingClosedL = ClosedAt(dock.LandingL, left: true, recess: true); dock.LandingL.localPosition = dock.LandingClosedL; }
+                if (dock.LandingR != null) { dock.LandingClosedR = ClosedAt(dock.LandingR, left: false, recess: true); dock.LandingR.localPosition = dock.LandingClosedR; }
                 dock.InShaft = true;
                 carriage.gameObject.SetActive(false);
                 Plugin.LogInfo($"[Elevator] {dock.Name} dock is inside the room's own shaft");
@@ -763,7 +762,12 @@ namespace Upstairs.Services
 
         // The prefab parks its doors ajar. Shut means the two inner edges meet in the middle, so the
         // closed spot comes from the door mesh's own width.
-        private static Vector3 ClosedAt(Transform door, bool left)
+        // The room side of the shaft wall, in the car's frame, and how far inside it the landing
+        // doors' outer face sits: recessed like a real landing, never proud of the wall.
+        private const float WallFace = -1.6f;
+        private const float LandingInset = 0.12f;
+
+        private static Vector3 ClosedAt(Transform door, bool left, bool recess = false)
         {
             Vector3 at = door.localPosition;
             MeshFilter filter = door.GetComponent<MeshFilter>();
@@ -776,6 +780,13 @@ namespace Upstairs.Services
             float scale = door.localScale.x;
             float inner = left ? b.center.x + b.extents.x : b.center.x - b.extents.x;
             at.x = -inner * scale;
+            if (recess)
+            {
+                // Outer face at the inset, whatever way the mesh hangs off its pivot.
+                float outer = b.center.z - b.extents.z;
+                at.z = WallFace + LandingInset - outer * door.localScale.z;
+                Plugin.LogInfo($"[Elevator] landing door {(left ? "L" : "R")} mesh z {b.center.z - b.extents.z:0.00}..{b.center.z + b.extents.z:0.00}, pivot z {at.z:0.00}");
+            }
             return at;
         }
 
