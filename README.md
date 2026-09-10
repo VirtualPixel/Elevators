@@ -10,7 +10,7 @@ The game's own elevator car, the one from the Museum, with a light inside and tw
 
 The buttons are the game's own pressable buttons, the kind the shop's reroll sits on, so the grabber sticks to them and the press is the same press. The roof hatch is a small door: grab it and swing it open or shut.
 
-Open the map and the wheel steps through the floors, with a tick and the floor's name written on the screen. Each floor is drawn on its own; nothing from the floor above or below shows through.
+Open the map and the wheel steps through the floors, with a tick and the floor's name written on the screen. It opens on your floor and follows you between floors. Each floor is drawn on its own; nothing from the floor above or below shows through. The map's route to the extraction point, or to the truck once you're done, leads to the nearest elevator when the destination is on another floor.
 
 Everyone in the lobby installs the mod. Someone without it stands where the car docks and the host tumbles them up, the way the game pulls a player out of the void, but they see no car and cannot ride it.
 

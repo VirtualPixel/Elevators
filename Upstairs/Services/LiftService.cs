@@ -317,6 +317,25 @@ namespace Upstairs.Services
         }
 
         // Nearest pad on the caller's own floor, else the nearest one anywhere.
+        // The nearest dock's walkable spot on the floor `from` is on, for a route to draw to.
+        internal bool NearestLanding(Vector3 from, float sameFloor, out Vector3 landing)
+        {
+            landing = Vector3.zero;
+            float best = float.MaxValue;
+            foreach (Pad pad in pads)
+            {
+                if (Mathf.Abs(pad.Position.y - from.y) > sameFloor)
+                    continue;
+                float d = Vector3.Distance(from, pad.Position);
+                if (d < best)
+                {
+                    best = d;
+                    landing = pad.Landing;
+                }
+            }
+            return best < float.MaxValue;
+        }
+
         internal bool NearestPad(Vector3 from, float sameFloor, out Vector3 position, out string name)
         {
             position = Vector3.zero;
