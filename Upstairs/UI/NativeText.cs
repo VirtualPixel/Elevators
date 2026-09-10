@@ -47,6 +47,28 @@ namespace Upstairs.UI
             return Object.FindObjectOfType<TextMeshProUGUI>();
         }
 
+        // A label in the world: a hand-sized world-space canvas carrying the same UI text the HUD
+        // uses, since the 3D text component cannot load a font in this build.
+        public static Transform CreateWorld(Transform parent, string label, float widthMetres)
+        {
+            var go = new GameObject("label " + label, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var canvas = go.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.WorldSpace;
+            var rect = (RectTransform)go.transform;
+            rect.sizeDelta = new Vector2(100f, 30f);
+            go.transform.localScale = Vector3.one * (widthMetres / 100f);
+            TextMeshProUGUI text = Create(go.transform, "text", 22f, TextAlignmentOptions.Center);
+            text.text = label;
+            text.color = new Color(1f, 0.9f, 0.7f);
+            RectTransform tr = text.rectTransform;
+            tr.anchorMin = Vector2.zero;
+            tr.anchorMax = Vector2.one;
+            tr.offsetMin = Vector2.zero;
+            tr.offsetMax = Vector2.zero;
+            return go.transform;
+        }
+
         public static TextMeshProUGUI Create(Transform parent, string name, float fontSize, TextAlignmentOptions align)
         {
             var go = new GameObject(name, typeof(RectTransform));

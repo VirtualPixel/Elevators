@@ -396,9 +396,18 @@ namespace Upstairs.Services
             Vector3 dir = SideDirection(side);
             float half = LevelGenerator.ModuleWidth * LevelGenerator.TileSize * 0.5f;
             Vector3 probe = center + dir * (half + 2.0f) + Vector3.up * 2.2f;
-            Collider[] hits = Physics.OverlapBox(probe, new Vector3(1.2f, 1.8f, 1.2f), Quaternion.identity, LayerMask.GetMask("Default"), QueryTriggerInteraction.Ignore);
-            blocker = hits.Length > 0 ? hits[0].name : "";
-            return hits.Length == 0;
+            Collider[] hits = Physics.OverlapBox(probe, new Vector3(1.2f, 1.8f, 1.2f), Quaternion.identity, ~0, QueryTriggerInteraction.Collide);
+            blocker = "";
+            foreach (Collider hit in hits)
+            {
+                // Solid geometry, or a death pit's trigger: both mean the car cannot stand here.
+                if (!hit.isTrigger && hit.gameObject.layer == LayerMask.NameToLayer("Default") || hit.GetComponentInParent<HurtCollider>() != null)
+                {
+                    blocker = hit.name;
+                    return false;
+                }
+            }
+            return true;
         }
 
         // A side of the cell with no room behind it. The truck side of the first row is never free.
