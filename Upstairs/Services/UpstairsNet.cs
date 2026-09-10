@@ -134,6 +134,20 @@ namespace Upstairs.Services
                 Elevator.PlayRide(from, to);
         }
 
+        // Host to everyone: the trip under way now ends further along.
+        internal static void SendExtend(int dock)
+        {
+            if (SemiFunc.IsMultiplayer() && Instance != null)
+                Instance.photonView.RPC(nameof(UpstairsExtendRPC), RpcTarget.Others, dock);
+        }
+
+        [PunRPC]
+        private void UpstairsExtendRPC(int dock, PhotonMessageInfo _info = default(PhotonMessageInfo))
+        {
+            if (SemiFunc.MasterOnlyRPC(_info))
+                Elevator.PlayExtend(dock);
+        }
+
         // A button press, from any client to the host, who decides if the car can go.
         internal static void RequestRide(int dock)
         {

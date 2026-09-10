@@ -480,8 +480,14 @@ namespace Upstairs.Services
                     ButtonKind.Down => NeighbourOf(queued >= 0 ? queued : toDock, above: false),
                     _ => -1
                 };
-                if (next < 0 || next == toDock)
+                if (next < 0 || next == toDock || next == queued)
                     return false;
+                // Further along the way the car is already going: the trip simply runs on to
+                // there, no stop between. Anything else waits its turn.
+                bool goingUp = travelTo.y > travelFrom.y;
+                bool beyond = goingUp ? docks[next].Position.y > docks[toDock].Position.y : docks[next].Position.y < docks[toDock].Position.y;
+                if (beyond && queued < 0 && Extend(next))
+                    return true;
                 queued = next;
                 return true;
             }
@@ -1537,12 +1543,17 @@ namespace Upstairs.Services
                     {
                         queued = -1;
                         doorsHeld = false;
+                        openHold = OpenHoldTime + 1f;
                     }
                 }
             }
+            // Doors open by button and on arrival, and close again on their own, unless someone is
+            // standing in them.
             if (openHold > 0f)
                 openHold -= dt;
-            float target = doorsHeld ? 0f : (openHold > 0f || AnyoneNear(root.position) ? 1f : 0f);
+            if (openHold > 0f && openHold < 0.5f && DoorwayBlocked())
+                openHold = 0.5f;
+            float target = doorsHeld ? 0f : (openHold > 0f ? 1f : 0f);
             float open = Mathf.MoveTowards(doorOpen, target, dt * 2f);
             if (open != doorOpen)
             {
@@ -1635,19 +1646,6 @@ namespace Upstairs.Services
                 return 0.5f * Accel * ramp * ramp + peak * (t - ramp);
             float tb = t - ramp - cruise;
             return 0.5f * Accel * ramp * ramp + peak * cruise + peak * tb - 0.5f * Accel * tb * tb;
-        }
-
-        private static bool AnyoneNear(Vector3 carPos)
-        {
-            foreach (PlayerAvatar player in SemiFunc.PlayerGetAll())
-            {
-                if (!player || player.isDisabled)
-                    continue;
-                Vector3 d = player.transform.position - carPos;
-                if (Mathf.Abs(d.y + FloorOffset) < 3f && new Vector2(d.x, d.z).magnitude < ApproachRange)
-                    return true;
-            }
-            return false;
         }
 
         // Inside the car footprint and standing on its floor.
@@ -1790,6 +1788,65 @@ namespace Upstairs.Services
                 if (hatch != null)
                     hatch.localRotation = hatchClosed * Quaternion.Euler(-HatchSwing * hatchOpen, 0f, 0f);
             }
+        }
+
+        // Retarget a trip in flight to a dock further along. The run so far keeps its shape; only
+        // the length grows, so the car cruises on instead of braking for the floor it will pass.
+        private static bool Extend(int dock)
+        {
+            if (!Moving || dock < 0 || dock >= docks.Count)
+                return false;
+            float covered = Trapezoid(travelT, travelLength, out bool arrived);
+            if (arrived || covered > travelLength - 6f)
+                return false;
+            Retarget(dock, covered);
+            UpstairsNet.SendExtend(dock);
+            Plugin.LogInfo($"[Elevator] trip extended to {docks[dock].Name}");
+            return true;
+        }
+
+        public static void PlayExtend(int dock)
+        {
+            if (!Moving || dock < 0 || dock >= docks.Count)
+                return;
+            Retarget(dock, Trapezoid(travelT, travelLength, out _));
+        }
+
+        // A longer run has a different profile; the clock is moved to wherever on it the car's
+        // current distance falls, so the position never jumps.
+        private static void Retarget(int dock, float covered)
+        {
+            toDock = dock;
+            travelTo = docks[dock].Position + Vector3.up * FloorOffset;
+            travelLength = Vector3.Distance(travelFrom, travelTo);
+            float lo = 0f;
+            float hi = travelLength / Mathf.Max(0.1f, Speed) + 2f * Speed / Accel + 1f;
+            for (int i = 0; i < 40; i++)
+            {
+                float mid = (lo + hi) * 0.5f;
+                if (Trapezoid(mid, travelLength, out _) < covered)
+                    lo = mid;
+                else
+                    hi = mid;
+            }
+            travelT = (lo + hi) * 0.5f;
+        }
+
+        // Anyone standing in the door line, inside or just outside the car.
+        private static bool DoorwayBlocked()
+        {
+            if (car == null)
+                return false;
+            Transform frame = car.transform.parent;
+            foreach (PlayerAvatar player in SemiFunc.PlayerGetAll())
+            {
+                if (player == null || player.isDisabled)
+                    continue;
+                Vector3 local = frame.InverseTransformPoint(player.transform.position);
+                if (Mathf.Abs(local.x) < cageHalfWidth && local.z > -2.3f && local.z < -0.8f && local.y > -FloorOffset - 0.6f && local.y < 2.5f)
+                    return true;
+            }
+            return false;
         }
 
         // The next stop up or down. A shaft room's sub floor is a side stop: down from its own

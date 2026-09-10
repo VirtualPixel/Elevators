@@ -6,9 +6,9 @@ Every level gets another floor. Same rooms the level already uses, same doors, s
 
 ## The elevator
 
-The game's own elevator car, the one from the Museum, with a light inside and two buttons on the wall by the doors.  Walk up and the doors slide open. Step in and grab the up or down button: the doors shut and the car rides the shaft to the next floor, you along with it, and the doors open again up there. Each floor has a call button on a post beside the dock, so you can bring the car to you.
+The game's own elevator car, the one from the Museum, with a light inside and two buttons on the wall by the doors.  Press the call button and the doors open, or the car comes if it is elsewhere. Step in and grab the up or down button: the doors shut and the car rides the shaft to the next floor, you along with it, and the doors open again up there for a few seconds. A second press of the same button while it moves takes you straight on to the floor after, no stop between.
 
-The buttons are the game's own pressable buttons, the kind the shop's reroll sits on, so the grabber sticks to them and the press is the same press. Call opens the doors when the car is already there. Press up twice and it goes two floors. A press the car can't honour, up on the top floor say, gets a refusal. The roof hatch is a small door: grab it and swing it open or shut.
+The buttons are the game's own pressable buttons, the kind the shop's reroll sits on, so the grabber sticks to them and the press is the same press. Call opens the doors when the car is already there. Press up twice and it rides straight through to the second floor. A press the car can't honour, up on the top floor say, gets a refusal. The roof hatch is a small door: grab it and swing it open or shut.
 
 Open the map and the wheel steps through the floors, with a tick and the floor's name written on the screen. It opens on your floor and follows you between floors. Each floor is drawn on its own; nothing from the floor above or below shows through. The map's route to the extraction point, or to the truck once you're done, leads to the nearest elevator when the destination is on another floor.
 
