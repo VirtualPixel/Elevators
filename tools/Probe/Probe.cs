@@ -286,14 +286,24 @@ namespace UpstairsProbe
                 UpstairsNet.RequestRide(upDock);
             yield return new WaitForSecondsRealtime(1.5f);
             log.LogInfo($"[Probe] {name} hum during ride: {Elevator.HumStatus()}");
-            float waited = 0f;
-            while (Elevator.Moving && waited < 30f) { yield return new WaitForSecondsRealtime(0.5f); waited += 0.5f; }
+            yield return RideTelemetry(name, me, "UP");
             log.LogInfo($"[Probe] {name} hum after ride: {Elevator.HumStatus()}");
             yield return new WaitForSecondsRealtime(1f);
             Verdict(name, "ELEVATOR UP", me.transform.position, up);
+            // Something loose rides down with us: a small valuable dropped by the panel.
+            ValuableObject? cargo = null;
+            foreach (ValuableObject v in Object.FindObjectsOfType<ValuableObject>())
+            {
+                if (v.physGrabObject != null && v.volumeType <= ValuableVolume.Type.Small) { cargo = v; break; }
+            }
+            if (cargo != null)
+            {
+                cargo.physGrabObject.Teleport(me.transform.position + Vector3.right * 0.8f + Vector3.up * 0.5f, Quaternion.identity);
+                yield return new WaitForSecondsRealtime(1f);
+            }
             UpstairsNet.RequestRide(DockNamed("ground"));
-            waited = 0f;
-            while (Elevator.Moving && waited < 30f) { yield return new WaitForSecondsRealtime(0.5f); waited += 0.5f; }
+            yield return new WaitForSecondsRealtime(1.5f);
+            yield return RideTelemetry(name, me, "DOWN", cargo);
             yield return new WaitForSecondsRealtime(1f);
             Verdict(name, "ELEVATOR DOWN", me.transform.position, ground);
             if (Session.Up != null)
@@ -309,6 +319,31 @@ namespace UpstairsProbe
                 else
                     Verdict(name, "VOID RESCUE", me.transform.position, ground);
             }
+        }
+
+        // How far the rider and any cargo stray from the car floor while it moves.
+        private IEnumerator RideTelemetry(string name, PlayerAvatar me, string what, ValuableObject? cargo = null)
+        {
+            float riderMin = 99f, riderMax = -99f, cargoMin = 99f, cargoMax = -99f, prev = float.NaN, jitter = 0f;
+            int samples = 0;
+            float waited = 0f;
+            while (Elevator.Moving && waited < 30f)
+            {
+                yield return new WaitForFixedUpdate();
+                waited += Time.fixedDeltaTime;
+                if (Elevator.CarVelocityY == 0f) continue;
+                float rider = me.transform.position.y - Elevator.FloorY;
+                riderMin = Mathf.Min(riderMin, rider); riderMax = Mathf.Max(riderMax, rider);
+                if (!float.IsNaN(prev)) jitter = Mathf.Max(jitter, Mathf.Abs(rider - prev));
+                prev = rider;
+                if (cargo != null)
+                {
+                    float c = cargo.transform.position.y - Elevator.FloorY;
+                    cargoMin = Mathf.Min(cargoMin, c); cargoMax = Mathf.Max(cargoMax, c);
+                }
+                samples++;
+            }
+            log.LogInfo($"[Probe] {name} RIDE {what} samples={samples} rider above floor min={riderMin:0.00} max={riderMax:0.00} stepJitter={jitter:0.000}{(cargo != null ? $" cargo min={cargoMin:0.00} max={cargoMax:0.00} inside={Elevator.IsInside(cargo.transform.position)}" : "")}");
         }
 
         private static int DockNamed(string name)

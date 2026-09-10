@@ -404,12 +404,24 @@ namespace Upstairs.Services
             Press(button);
         }
 
+        private static Sound? standPress;
+        private static bool standPressLooked;
+
         private static void Press(LiftButton button)
         {
             if (Time.time - button.LastPress < 0.3f)
                 return;
             button.LastPress = Time.time;
             Play(sounds?.soundButton, button.transform.position);
+            // The upgrade stand's press has the weight the extraction click lacks.
+            if (!standPressLooked)
+            {
+                standPressLooked = true;
+                GameObject? stands = Resources.Load<GameObject>("level/shop/modules/Module - Shop - N - Corner Stands");
+                UpgradeStand? stand = stands != null ? stands.GetComponentInChildren<UpgradeStand>(true) : null;
+                standPress = stand != null ? stand.soundButtonPress : null;
+            }
+            Play(standPress, button.transform.position);
             Plugin.Instance.StartCoroutine(Squash(button.transform));
         }
 
@@ -562,7 +574,9 @@ namespace Upstairs.Services
             }
             if (hum != null)
             {
-                AudioClip clip = hum.clip;
+                // The carriage's own loop is close to silent; a door motor from the Arctic
+                // level is the sound an elevator makes.
+                AudioClip clip = MotorClip() ?? hum.clip;
                 hum.Stop();
                 hum.gameObject.SetActive(false);
                 var motor = new GameObject("motor").AddComponent<AudioSource>();
@@ -591,7 +605,7 @@ namespace Upstairs.Services
                 {
                     Sounds = new[] { clip },
                     Source = motor,
-                    Volume = 0.9f,
+                    Volume = 0.55f,
                     VolumeRandom = 0f,
                     Pitch = 1f,
                     PitchRandom = 0f,
@@ -911,6 +925,45 @@ namespace Upstairs.Services
                 Object.DestroyImmediate(rb);
         }
 
+        private static AudioClip? motorClip;
+
+        // The move loop of the Arctic level's doors, read off the first hinge that uses it in any
+        // level's room list. Loaded once.
+        private static AudioClip? MotorClip()
+        {
+            if (motorClip != null)
+                return motorClip;
+            RunManager rm = RunManager.instance;
+            if (rm == null || rm.levels == null)
+                return null;
+            foreach (Level level in rm.levels)
+            {
+                foreach (List<PrefabRef> list in new[] { level.ModulesNormal1, level.ModulesPassage1, level.ModulesDeadEnd1 })
+                {
+                    if (list == null)
+                        continue;
+                    foreach (PrefabRef pr in list)
+                    {
+                        GameObject? prefab = pr != null && pr.IsValid() ? pr.Prefab : null;
+                        if (prefab == null)
+                            continue;
+                        foreach (PhysGrabHinge hinge in prefab.GetComponentsInChildren<PhysGrabHinge>(true))
+                        {
+                            HingeAudio audio = hinge.hingeAudio;
+                            if (audio == null || audio.moveLoop == null || audio.moveLoop.Sounds == null || audio.moveLoop.Sounds.Length == 0)
+                                continue;
+                            if (!audio.name.Contains("Arctic") && !audio.name.Contains("Container"))
+                                continue;
+                            motorClip = audio.moveLoop.Sounds[0];
+                            Plugin.LogInfo($"[Elevator] motor loop from {audio.name}: {motorClip.name}");
+                            return motorClip;
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
         private static GameObject? FindAsset(string childName)
         {
             RunManager rm = RunManager.instance;
@@ -973,6 +1026,7 @@ namespace Upstairs.Services
             lastCarPos = root.position;
             localRiding = LocalInside();
             Play(sounds?.soundActivate1, root.position);
+            EnemyDirector.instance?.SetInvestigate(root.position, 20f);
             Plugin.LogInfo($"[Elevator] {docks[from].Name} -> {docks[to].Name}, {travelLength:0} m, rider={localRiding}");
         }
 
@@ -1039,6 +1093,7 @@ namespace Upstairs.Services
                 // Doors still closing: whoever steps in now rides too.
                 doorWait -= dt;
                 localRiding = localRiding || LocalInside();
+                CarVelocityY = 0f;
                 return;
             }
             // Accelerate, cruise, brake, never harder than a body in free fall, so a rider the carry
@@ -1050,8 +1105,8 @@ namespace Upstairs.Services
                 travelT = float.MaxValue;
             body.MovePosition(next);
             Vector3 delta = next - before;
-            if (localRiding)
-                Carry(delta, next.y - FloorOffset, delta.y / dt);
+            CarVelocityY = arrived ? 0f : delta.y / dt;
+            CarryCargo();
             lastCarPos = next;
             if (arrived)
             {
@@ -1059,6 +1114,8 @@ namespace Upstairs.Services
                 toDock = -1;
                 doorsHeld = false;
                 Play(sounds?.soundActivate3, next);
+                // The whole building hears an elevator land.
+                EnemyDirector.instance?.SetInvestigate(next, 20f);
             }
         }
 
@@ -1108,26 +1165,59 @@ namespace Upstairs.Services
             return me != null && IsInside(me.transform.position);
         }
 
-        private static void Carry(Vector3 delta, float floorY, float carVelY)
+        // The car's vertical speed this physics step; zero while parked or while the doors work.
+        internal static float CarVelocityY { get; private set; }
+        internal static float FloorY => body != null ? body.position.y - FloorOffset : 0f;
+
+        private const float RideBand = 0.7f;
+
+        // The controller turns gravity off while it counts you grounded, so on the way down you
+        // would hang above a floor that keeps leaving, and on the way up the floor would shove
+        // you a step at a time. Runs after the controller's own physics step: anyone standing
+        // in the moving car simply travels at the car's speed, and a real jump is left alone.
+        internal static void CarryLocal(PlayerController pc)
         {
-            PlayerController pc = PlayerController.instance;
-            if (pc == null || pc.rb == null)
+            if (pc == null || pc.rb == null || pc.rb.isKinematic || !Moving || doorWait > 0f)
                 return;
-            Vector3 pos = pc.rb.position + delta;
+            if (!IsInside(pc.transform.position))
+                return;
             Vector3 vel = pc.rb.velocity;
-            // The controller zeroes your fall whenever it believes it is grounded, so on the way
-            // down you would hover above a floor that keeps leaving. Anyone within a step of the
-            // floor who is not actually jumping upward gets pinned to it.
-            bool jumping = vel.y > Mathf.Max(0.5f, carVelY + 0.5f);
-            float above = pos.y - floorY;
-            if (!jumping && above < 0.6f)
+            if (!Standing(pc.rb.position.y, vel.y))
+                return;
+            vel.y = CarVelocityY;
+            pc.rb.velocity = vel;
+        }
+
+        private static bool Standing(float y, float velY)
+        {
+            float above = y - FloorY;
+            bool jumping = velY > CarVelocityY + 0.5f;
+            return above < RideBand && above > -1f && !jumping;
+        }
+
+        // Carts, valuables and anything else loose in the car ride the same way.
+        private static readonly Collider[] cargo = new Collider[64];
+
+        private static void CarryCargo()
+        {
+            if (car == null || body == null)
+                return;
+            Transform frame = car.transform.parent;
+            Vector3 centre = frame.TransformPoint(new Vector3(0f, 1f - FloorOffset + 1.2f, 0f));
+            Vector3 half = new Vector3(cageHalfWidth, 1.8f, cageHalfWidth);
+            int n = Physics.OverlapBoxNonAlloc(centre, half, cargo, frame.rotation, ~0, QueryTriggerInteraction.Ignore);
+            PlayerController pc = PlayerController.instance;
+            for (int i = 0; i < n; i++)
             {
-                pos.y = floorY + 0.02f;
-                vel.y = Mathf.Min(vel.y, carVelY);
-                pc.rb.velocity = vel;
+                Rigidbody rb = cargo[i].attachedRigidbody;
+                if (rb == null || rb.isKinematic || rb == body || (pc != null && rb == pc.rb))
+                    continue;
+                Vector3 vel = rb.velocity;
+                if (!Standing(rb.position.y, vel.y))
+                    continue;
+                vel.y = CarVelocityY;
+                rb.velocity = vel;
             }
-            pc.rb.position = pos;
-            pc.transform.position = pos;
         }
 
         // The local player's grab key on a button they are looking at.

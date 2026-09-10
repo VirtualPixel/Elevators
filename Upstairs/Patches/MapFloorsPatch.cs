@@ -20,6 +20,7 @@ namespace Upstairs.Patches
         private const string LabelName = "Upstairs floor";
 
         private static int viewing = -1;
+        private static int playerFloor = -1;
         private static TMP_Text? label;
         private static bool playerHidden;
 
@@ -31,6 +32,7 @@ namespace Upstairs.Patches
             if (!__instance.Active)
             {
                 viewing = -1;
+                playerFloor = -1;
                 ViewingName = "";
                 ShowLabel(false);
                 ShowPlayer(__instance, true);
@@ -52,8 +54,12 @@ namespace Upstairs.Patches
             LiftService? lift = LiftService.Instance;
             if (lift == null || lift.FloorCount < 2)
                 return;
-            if (viewing < 0)
-                viewing = lift.FloorIndexOfLayer(__instance.PlayerLayer);
+            // Opens on the floor you stand on, and follows you if you change floors while it is up.
+            PlayerAvatar me = PlayerAvatar.instance;
+            int mine = me != null ? lift.FloorIndexOfHeight(me.transform.position.y) : lift.FloorIndexOfLayer(__instance.PlayerLayer);
+            if (viewing < 0 || mine != playerFloor)
+                viewing = mine;
+            playerFloor = mine;
 
             float scroll = Input.mouseScrollDelta.y;
             if (scroll > 0.01f || scroll < -0.01f)
@@ -117,8 +123,7 @@ namespace Upstairs.Patches
                         mark.gameObject.SetActive(show);
                 }
             }
-            PlayerAvatar me = PlayerAvatar.instance;
-            bool onViewedFloor = me == null || lift.FloorIndexOfHeight(me.transform.position.y) == viewing;
+            bool onViewedFloor = playerFloor < 0 || playerFloor == viewing;
             ShowPlayer(__instance, onViewedFloor);
             if (label == null)
                 label = BuildLabel(__instance);

@@ -44,8 +44,8 @@ namespace Upstairs.Configuration
                 "these are on top, and the quota grows with them like any other valuable.",
                 new AcceptableValueRange<int>(0, 150)));
 
-            EnemiesOnNewFloors = config.Bind("Floors", "EnemiesOnNewFloors", false,
-                "Let monsters spawn and roam on the new floors. Off keeps them on the ground floor, so a ride up is a real escape.");
+            EnemiesOnNewFloors = config.Bind("Floors", "EnemiesOnNewFloors", true,
+                "Monsters can turn up on the new floors. The game already moves a monster that has lost you to a fresh spot some way off, and with this on those spots include the floor you rode to, so a ride buys time, not safety. The elevator is loud: leaving and arriving draws anything nearby to the shaft. Off keeps them to the ground floor.");
 
             AvoidRooms = config.Bind("Floors", "AvoidRooms", "Bottomless,Outside",
                 "Comma separated. A room whose name contains one of these is never picked for a new floor. " +

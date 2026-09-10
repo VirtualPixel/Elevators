@@ -29,7 +29,7 @@ The game does not always roll those rooms, and when it does not you get the plai
 - Rooms on the new floor come from the level's normal, passage and dead end lists. Nothing custom, nothing that looks out of place.
 - Extraction points stay on the ground floor. The haul loop is untouched.
 - The ground floor keeps its normal loot. The new floors get `ExtraLoot` percent of that on top, placed the way the game places its own. The quota grows with them the way it does with any valuable.
-- Monsters spawn and roam on the ground floor only, unless you turn `EnemiesOnNewFloors` on. A ride up is a real escape.
+- Monsters follow. The game moves a monster that has lost you to a fresh spot some way off, and those spots include the floor you rode to, so a ride buys time, not safety. The elevator is loud: leaving and arriving draws anything close to the shaft. Turn `EnemiesOnNewFloors` off to keep them downstairs.
 - The gap between floors is measured per level from the tallest and deepest rooms in play, so a catwalk never pokes through the floor above. If you somehow end up outside every room and off the navmesh, on a roof between floors say, the lift catches you after a few seconds and puts you back on the ground pad. FreeFly flyers are left alone.
 
 ## Settings
@@ -43,7 +43,7 @@ The game does not always roll those rooms, and when it does not you get the plai
 | Basement | `false` | Build a floor below as well. Crouch on the lift to reach it |
 | FloorSize | `60` | Rooms on each new floor as a percent of the ground floor's rooms |
 | ExtraLoot | `50` | Valuables on the new floors, percent of what the ground floor gets |
-| EnemiesOnNewFloors | `false` | Let monsters up there |
+| EnemiesOnNewFloors | `true` | Monsters turn up on the new floors too |
 | AvoidRooms | `Bottomless,Outside` | Rooms with these words in their name never get picked for a new floor |
 | LiftCooldown | `4` | Seconds before the same player can ride again |
 | ShowLiftHint | `true` | HUD line pointing you at the nearest elevator |
