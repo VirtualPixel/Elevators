@@ -138,6 +138,7 @@ namespace Upstairs.Services
         private static Vector3 lastCarPos;
         private static bool localRiding;
         private static AudioSource? hum;
+        private static Sound? humLoop;
         private static Rigidbody? body;
         private static float cageHalfWidth = 1.7f;
         private static Transform? hatch;
@@ -202,6 +203,7 @@ namespace Upstairs.Services
             grab.uiPosition = template.transform;
             grab.hoverText = "Roof hatch";
             template.AddComponent<PhotonView>();
+            OwnBody(template);
             template.AddComponent<LiftButton>();
             hatchTemplate = template;
             hatchRef = NetworkPrefabs.RegisterNetworkPrefab(HatchPrefabId, template);
@@ -245,12 +247,24 @@ namespace Upstairs.Services
             grab.uiPosition = button.transform;
             grab.hoverText = "Elevator";
             button.AddComponent<PhotonView>();
+            OwnBody(button);
             if (areaBox != null)
             {
                 var area = button.AddComponent<PhysGrabObjectGrabArea>();
                 area.grabAreas.Add(new PhysGrabObjectGrabArea.GrabArea { grabAreaTransform = areaBox });
             }
             return button;
+        }
+
+        // The grabber takes the hit's rigidbody as the thing it grabbed. Inside the car every
+        // collider belongs to the car's body, so a button needs a body of its own to be seen.
+        private static void OwnBody(GameObject go)
+        {
+            // The hatch plate came with a body of its own; a destroyed one lingers until the
+            // end of the frame and a second cannot be added beside it.
+            Rigidbody rb = go.GetComponent<Rigidbody>() ?? go.AddComponent<Rigidbody>();
+            rb.isKinematic = true;
+            rb.useGravity = false;
         }
 
         // Fallback when the shop module is not there to borrow from: the Museum's wall plate with
@@ -294,6 +308,7 @@ namespace Upstairs.Services
             grab.uiPosition = template.transform;
             grab.hoverText = "Elevator";
             template.AddComponent<PhotonView>();
+            OwnBody(template);
             return template;
         }
 
@@ -361,6 +376,7 @@ namespace Upstairs.Services
             LiftButton button = grab.GetComponent<LiftButton>();
             if (button == null || player == null || player.photonView == null || !player.photonView.IsMine)
                 return;
+            Plugin.LogInfo($"[Elevator] grabbed {button.Kind} (dock {button.Dock})");
             Press(button);
             Ride(button);
         }
@@ -372,19 +388,18 @@ namespace Upstairs.Services
             if (button == null || !SemiFunc.IsMasterClientOrSingleplayer())
                 return;
             int grabberView = grabber != null && grabber.photonView != null ? grabber.photonView.ViewID : -1;
+            Plugin.LogInfo($"[Elevator] grab area press {button.Kind} (dock {button.Dock})");
             UpstairsNet.SendPress(button.GetComponent<PhotonView>()?.ViewID ?? -1, grabberView);
             Ride(button);
         }
 
-        // Everyone: the click and the squash, unless this is the player who pressed it and heard it already.
+        // Everyone: the click and the squash. The presser's own client already played it on the
+        // grab, and the short dedupe in Press keeps that from doubling.
         public static void PlayPress(int buttonView, int grabberView)
         {
             PhotonView view = PhotonView.Find(buttonView);
             LiftButton button = view != null ? view.GetComponent<LiftButton>() : null;
             if (button == null)
-                return;
-            PhotonView? mine = PlayerAvatar.instance != null ? PlayerAvatar.instance.photonView : null;
-            if (mine != null && mine.ViewID == grabberView)
                 return;
             Press(button);
         }
@@ -413,12 +428,36 @@ namespace Upstairs.Services
 
         private static System.Collections.IEnumerator Squash(Transform plate)
         {
-            Vector3 rest = plate.localScale;
-            // The shop button presses along its own up; the plate squashes into the wall.
-            plate.localScale = shopButton ? new Vector3(rest.x, rest.y * 0.6f, rest.z) : new Vector3(rest.x, rest.y, rest.z * 0.4f);
-            yield return new WaitForSeconds(0.15f);
-            if (plate != null)
-                plate.localScale = rest;
+            if (!shopButton)
+            {
+                Vector3 rest = plate.localScale;
+                plate.localScale = new Vector3(rest.x, rest.y, rest.z * 0.4f);
+                yield return new WaitForSeconds(0.15f);
+                if (plate != null)
+                    plate.localScale = rest;
+                yield break;
+            }
+            // The shop button's cap travels down its own axis and springs back.
+            Transform cap = plate.Find("Shop Button Visual") ?? plate;
+            Vector3 up = cap.localPosition;
+            Vector3 down = up - Vector3.up * 0.09f;
+            float t = 0f;
+            while (t < 1f && cap != null)
+            {
+                t += Time.deltaTime / 0.08f;
+                cap.localPosition = Vector3.Lerp(up, down, Mathf.Clamp01(t));
+                yield return null;
+            }
+            yield return new WaitForSeconds(0.12f);
+            t = 0f;
+            while (t < 1f && cap != null)
+            {
+                t += Time.deltaTime / 0.15f;
+                cap.localPosition = Vector3.Lerp(down, up, Mathf.Clamp01(t));
+                yield return null;
+            }
+            if (cap != null)
+                cap.localPosition = up;
         }
 
         public static void Clear()
@@ -435,6 +474,7 @@ namespace Upstairs.Services
             car = null;
             doorL = doorR = null;
             hum = null;
+            humLoop = null;
             hatch = null;
             hatchOpen = 0f;
             hatchWantOpen = false;
@@ -535,10 +575,32 @@ namespace Upstairs.Services
                 motor.rolloffMode = AudioRolloffMode.Logarithmic;
                 motor.minDistance = 3f;
                 motor.maxDistance = 30f;
-                motor.volume = 0.9f;
-                motor.outputAudioMixerGroup = hum.outputAudioMixerGroup != null ? hum.outputAudioMixerGroup : (AudioManager.instance != null ? AudioManager.instance.SoundMasterGroup : null);
+                motor.volume = 0f;
+                // Routed like the game's own one-shots, which are heard, rather than the carriage
+                // loop's group, which was not.
+                AudioSource? proto = AudioManager.instance != null && AudioManager.instance.AudioDefault != null ? AudioManager.instance.AudioDefault.GetComponent<AudioSource>() : null;
+                motor.outputAudioMixerGroup = proto != null && proto.outputAudioMixerGroup != null ? proto.outputAudioMixerGroup : (AudioManager.instance != null ? AudioManager.instance.SoundMasterGroup : hum.outputAudioMixerGroup);
+                if (proto != null)
+                {
+                    motor.rolloffMode = proto.rolloffMode;
+                    motor.minDistance = Mathf.Max(2f, proto.minDistance);
+                    motor.maxDistance = Mathf.Max(20f, proto.maxDistance);
+                }
                 hum = motor;
-                Plugin.LogInfo($"[Elevator] motor clip: {(clip != null ? clip.name : "none")}");
+                humLoop = new Sound
+                {
+                    Sounds = new[] { clip },
+                    Source = motor,
+                    Volume = 0.9f,
+                    VolumeRandom = 0f,
+                    Pitch = 1f,
+                    PitchRandom = 0f,
+                    SpatialBlend = 1f,
+                    Doppler = 0f,
+                    ReverbMix = 1f,
+                    FalloffMultiplier = 1f
+                };
+                Plugin.LogInfo($"[Elevator] motor clip: {(clip != null ? clip.name : "none")}, group {(motor.outputAudioMixerGroup != null ? motor.outputAudioMixerGroup.name : "none")}");
             }
             else
             {
@@ -842,11 +904,11 @@ namespace Upstairs.Services
         private static void StripScripts(GameObject root)
         {
             foreach (MonoBehaviour script in root.GetComponentsInChildren<MonoBehaviour>(true))
-                Object.Destroy(script);
+                Object.DestroyImmediate(script);
             foreach (Joint joint in root.GetComponentsInChildren<Joint>(true))
-                Object.Destroy(joint);
+                Object.DestroyImmediate(joint);
             foreach (Rigidbody rb in root.GetComponentsInChildren<Rigidbody>(true))
-                Object.Destroy(rb);
+                Object.DestroyImmediate(rb);
         }
 
         private static GameObject? FindAsset(string childName)
@@ -911,13 +973,15 @@ namespace Upstairs.Services
             lastCarPos = root.position;
             localRiding = LocalInside();
             Play(sounds?.soundActivate1, root.position);
-            if (hum != null)
-                hum.Play();
             Plugin.LogInfo($"[Elevator] {docks[from].Name} -> {docks[to].Name}, {travelLength:0} m, rider={localRiding}");
         }
 
         public static void Tick(float dt)
         {
+            // The game's own loop player: fades in on the way, out on arrival, low-passed
+            // through walls like every other loop it runs.
+            if (humLoop != null && hum != null && hum.gameObject.activeInHierarchy)
+                humLoop.PlayLoop(Moving, 2f, 3f);
             if (car == null)
                 return;
             Transform root = car.transform.parent;
@@ -994,8 +1058,6 @@ namespace Upstairs.Services
                 atDock = toDock;
                 toDock = -1;
                 doorsHeld = false;
-                if (hum != null)
-                    hum.Stop();
                 Play(sounds?.soundActivate3, next);
             }
         }
@@ -1177,6 +1239,15 @@ namespace Upstairs.Services
                 ButtonKind.Hatch => hatchRef != null ? "swing the hatch" : hatchWantOpen ? "close the hatch" : "open the hatch",
                 _ => "call"
             };
+        }
+
+        internal static string HumStatus() => hum == null ? "no hum" : $"playing={hum.isPlaying} vol={hum.volume:0.00} clip={(hum.clip != null ? hum.clip.name : "none")} group={(hum.outputAudioMixerGroup != null ? hum.outputAudioMixerGroup.name : "none")} active={hum.gameObject.activeInHierarchy}";
+
+        internal static LiftButton? FindButton(ButtonKind kind)
+        {
+            foreach (LiftButton b in Object.FindObjectsOfType<LiftButton>())
+                if (b.Kind == kind && b.Attached) return b;
+            return null;
         }
 
         public static string LocalStatus()

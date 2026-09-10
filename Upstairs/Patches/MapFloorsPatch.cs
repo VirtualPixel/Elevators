@@ -168,7 +168,8 @@ namespace Upstairs.Patches
             TMP_Text text = go.GetComponent<TMP_Text>();
             text.alignment = TextAlignmentOptions.TopLeft;
             text.enableWordWrapping = false;
-            text.fontSize = source.fontSize;
+            // Big, the map screen is only two hundred pixels across.
+            text.fontSize = source.fontSize * 1.8f;
             // The map draws in one green; the player dot carries it as a plain colour.
             SpriteRenderer? dot = map.PlayerGraphicTransform != null ? map.PlayerGraphicTransform.GetComponentInChildren<SpriteRenderer>(true) : null;
             Color tint = dot != null ? dot.color : new Color(0.55f, 1f, 0.6f);

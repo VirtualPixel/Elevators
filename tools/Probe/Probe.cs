@@ -260,10 +260,35 @@ namespace UpstairsProbe
                 yield return new WaitForSecondsRealtime(1.5f);
             }
             int upDock = DockNamed("upstairs");
-            log.LogInfo($"[Probe] {name} pressing up (dock {upDock}), inside={Elevator.IsInside(me.transform.position)} at={me.transform.position} dock={ground}");
-            UpstairsNet.RequestRide(upDock);
+            // What the grabber does: the hit's transform must carry the StaticGrabObject.
+            foreach (Elevator.LiftButton b in Object.FindObjectsOfType<Elevator.LiftButton>())
+            {
+                Vector3 axis = b.transform.up;
+                bool hit = Physics.Raycast(b.transform.position + axis * 0.8f, -axis, out RaycastHit h, 1.5f, ~0, QueryTriggerInteraction.Ignore);
+                log.LogInfo($"[Probe] {name} ray at {b.Kind}/{b.Dock}: hit={(hit ? h.transform.name : "nothing")} static={(hit && h.transform.GetComponent<StaticGrabObject>() != null)} rb={(hit && h.rigidbody != null ? h.rigidbody.name : "none")}");
+            }
+            Elevator.LiftButton? upButton = Elevator.FindButton(Elevator.ButtonKind.Up);
+            log.LogInfo($"[Probe] {name} pressing up (dock {upDock}) by grabbing={(upButton != null)}, inside={Elevator.IsInside(me.transform.position)} at={me.transform.position} dock={ground}");
+            if (upButton != null && me.physGrabber != null)
+            {
+                StaticGrabObject grab = upButton.GetComponent<StaticGrabObject>();
+                grab.GrabStarted(me.physGrabber);
+                yield return new WaitForSecondsRealtime(0.5f);
+                grab.GrabEnded(me.physGrabber);
+                yield return new WaitForSecondsRealtime(0.5f);
+                if (!Elevator.Moving)
+                {
+                    log.LogWarning($"[Probe] {name} the grabbed up button started no ride");
+                    UpstairsNet.RequestRide(upDock);
+                }
+            }
+            else
+                UpstairsNet.RequestRide(upDock);
+            yield return new WaitForSecondsRealtime(1.5f);
+            log.LogInfo($"[Probe] {name} hum during ride: {Elevator.HumStatus()}");
             float waited = 0f;
             while (Elevator.Moving && waited < 30f) { yield return new WaitForSecondsRealtime(0.5f); waited += 0.5f; }
+            log.LogInfo($"[Probe] {name} hum after ride: {Elevator.HumStatus()}");
             yield return new WaitForSecondsRealtime(1f);
             Verdict(name, "ELEVATOR UP", me.transform.position, up);
             UpstairsNet.RequestRide(DockNamed("ground"));

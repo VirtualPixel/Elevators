@@ -14,7 +14,15 @@ namespace Upstairs.Patches
             LiftService.Instance?.Clear();
             UpstairsNet.ResetApplied();
             if (RunManager.instance != null)
-                Elevator.EnsureButtonPrefab();
+                // The menu's own generator runs after this; a bad prefab build must not take it down.
+                try
+                {
+                    Elevator.EnsureButtonPrefab();
+                }
+                catch (System.Exception e)
+                {
+                    Plugin.Logger.LogError($"[Elevator] button prefab build failed, the elevator will have no buttons: {e}");
+                }
         }
     }
 
