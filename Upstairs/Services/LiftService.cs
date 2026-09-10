@@ -190,6 +190,30 @@ namespace Upstairs.Services
             return parts.Count == 0 ? "no pads" : string.Join(" | ", parts);
         }
 
+        // Nearest pad on the caller's own floor, else the nearest one anywhere.
+        internal bool NearestPad(Vector3 from, float sameFloor, out Vector3 position, out string name)
+        {
+            position = Vector3.zero;
+            name = "";
+            float best = float.MaxValue;
+            bool sameFloorFound = false;
+            foreach (Pad pad in pads)
+            {
+                bool onFloor = Mathf.Abs(pad.Position.y - from.y) <= sameFloor;
+                if (sameFloorFound && !onFloor)
+                    continue;
+                float d = Vector3.Distance(from, pad.Position);
+                if ((onFloor && !sameFloorFound) || d < best)
+                {
+                    best = d;
+                    position = pad.Position;
+                    name = pad.Name;
+                    sameFloorFound = sameFloorFound || onFloor;
+                }
+            }
+            return best < float.MaxValue;
+        }
+
         internal bool TryGetPad(string name, out Vector3 position)
         {
             foreach (Pad pad in pads)

@@ -4,6 +4,7 @@ using HarmonyLib;
 using UnityEngine;
 using Upstairs.Configuration;
 using Upstairs.Services;
+using Upstairs.UI;
 
 namespace Upstairs
 {
@@ -23,6 +24,7 @@ namespace Upstairs
             PluginConfig.Init(Config);
             gameObject.AddComponent<LiftService>();
             gameObject.AddComponent<Announcer>();
+            gameObject.AddComponent<LiftHud>();
             new Harmony(Info.Metadata.GUID).PatchAll();
 
             Logger.LogInfo($"{Info.Metadata.GUID} v{Info.Metadata.Version} loaded. LogLevel={PluginConfig.LoggingLevel.Value}");

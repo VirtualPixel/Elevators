@@ -21,6 +21,7 @@ namespace Upstairs.Configuration
         public static ConfigEntry<float> LiftCooldown = null!;
         public static ConfigEntry<bool> Announce = null!;
         public static ConfigEntry<bool> VoidRescue = null!;
+        public static ConfigEntry<bool> ShowLiftHint = null!;
         public static ConfigEntry<VerbosityLevel> LoggingLevel = null!;
 
         public static void Init(ConfigFile config)
@@ -54,6 +55,9 @@ namespace Upstairs.Configuration
             LiftCooldown = config.Bind("Lift", "LiftCooldown", 4f, new ConfigDescription(
                 "Seconds before the same player can ride the lift again.",
                 new AcceptableValueRange<float>(1f, 15f)));
+
+            ShowLiftHint = config.Bind("Lift", "ShowLiftHint", true,
+                "A line at the bottom of the HUD with the distance and direction to the nearest lift pad. Only the host sees it.");
 
             VoidRescue = config.Bind("Lift", "VoidRescue", true,
                 "A player who spends a couple of seconds outside every room, on a roof between floors say, gets lifted back to the ground pad.");
