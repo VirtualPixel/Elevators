@@ -31,10 +31,13 @@ namespace Upstairs.Patches
             {
                 Transform module = __result.transform;
                 module.localPosition = new Vector3(module.localPosition.x, 0f, module.localPosition.z);
+                // The fill and the outline hang off the module object too, and both carry the game's
+                // MapObject on their root; only the module's own graphics keep their place.
                 foreach (Transform child in module)
                 {
-                    if (child.GetComponent<MapObject>() == null && child != __result.graphic)
-                        child.localPosition = new Vector3(child.localPosition.x, 0f, child.localPosition.z);
+                    if (child == __result.graphic || child.name.StartsWith("Graphic"))
+                        continue;
+                    child.localPosition = new Vector3(child.localPosition.x, 0f, child.localPosition.z);
                 }
             }
             if (saved == null)
