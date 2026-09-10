@@ -73,16 +73,17 @@ namespace Upstairs.UI
             float rise = flat.y;
             flat.y = 0f;
             float distance = flat.magnitude;
-            if (distance < HideWithin && Mathf.Abs(rise) < 2f)
+            switch (Elevator.LocalStatus())
             {
-                return lift.LocalPadStatus() switch
-                {
-                    "latched" => "LIFT  step off and back on to ride again",
-                    "cooldown" => "LIFT  one moment",
-                    "ride" => "LIFT  stand still",
-                    _ => string.Empty
-                };
+                case "riding":
+                    return string.Empty;
+                case "moving":
+                    return "ELEVATOR  on its way";
+                case "inside":
+                    return "ELEVATOR  grab a button";
             }
+            if (distance < HideWithin && Mathf.Abs(rise) < 2f)
+                return Elevator.Built ? "ELEVATOR  call it with the button" : "LIFT  stand still";
 
             Vector3 forward = cam.transform.forward;
             forward.y = 0f;
@@ -107,7 +108,7 @@ namespace Upstairs.UI
                 way += ", above";
             else if (rise < -6f)
                 way += ", below";
-            string label = pad == "ground" ? "LIFT" : pad == "upstairs" ? "LIFT DOWN" : "LIFT UP";
+            string label = Elevator.Built ? "ELEVATOR" : pad == "ground" ? "LIFT" : pad == "upstairs" ? "LIFT DOWN" : "LIFT UP";
             return $"{label}  {Mathf.RoundToInt(distance)} m, {way}";
         }
 

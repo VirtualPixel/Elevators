@@ -14,7 +14,7 @@ namespace UpstairsProbe
     [BepInDependency("Vippy.Upstairs")]
     public class Probe : BaseUnityPlugin
     {
-        private static readonly string[] Levels = { "Museum", "Manor", "Arctic", "Wizard" };
+        private static string[] levels = { "Museum", "Manor", "Arctic", "Wizard" };
 
         private ManualLogSource log = null!;
         internal static Level? Forced;
@@ -25,6 +25,9 @@ namespace UpstairsProbe
             string flag = Path.Combine(Paths.ConfigPath, "upstairs-probe.flag");
             if (!File.Exists(flag))
                 return;
+            string wanted = File.ReadAllText(flag).Trim();
+            if (wanted.Length > 0)
+                levels = wanted.Split(',');
             File.Delete(flag);
             gameObject.transform.parent = null;
             gameObject.hideFlags = HideFlags.HideAndDontSave;
@@ -41,12 +44,14 @@ namespace UpstairsProbe
 
             RunManager rm = RunManager.instance;
             var original = new List<Level>(rm.levels);
-            for (int i = 0; i < Levels.Length; i++)
+            for (int i = 0; i < levels.Length; i++)
             {
-                Level? target = original.Find(l => l.name.Contains(Levels[i]));
+                bool needSite = levels[i].EndsWith("!");
+                string levelName = levels[i].TrimEnd('!');
+                Level? target = original.Find(l => l.name.Contains(levelName));
                 if (target == null)
                 {
-                    log.LogWarning($"[Probe] no level named like {Levels[i]}");
+                    log.LogWarning($"[Probe] no level named like {levelName}");
                     continue;
                 }
                 Forced = target;
@@ -72,12 +77,17 @@ namespace UpstairsProbe
                 Forced = null;
                 if (waited >= 180f)
                 {
-                    log.LogError($"[Probe] {Levels[i]}: level never generated");
+                    log.LogError($"[Probe] {levels[i]}: level never generated");
                     continue;
                 }
                 yield return new WaitForSecondsRealtime(6f);
-                Report(Levels[i]);
-                yield return Rides(Levels[i]);
+                if (needSite && Session.Site == null)
+                {
+                    log.LogInfo($"[Probe] {levelName}: no lift site this roll, rolling again");
+                    continue;
+                }
+                Report(levelName);
+                yield return Rides(levelName);
             }
             log.LogInfo("[Probe] DONE");
             yield return new WaitForSecondsRealtime(2f);
@@ -111,7 +121,7 @@ namespace UpstairsProbe
             }
             int groundLoot = Count(valuables, v => v.transform.position.y <= Session.GroundTop && v.transform.position.y >= Session.GroundBottom);
             log.LogInfo($"[Probe] {name} ground: modules={Count(modules, m => Mathf.Abs(m.transform.position.y) < 1f)} doors={Count(doors, d => Mathf.Abs(d.transform.position.y) < 1f)} loot={groundLoot} of {valuables.Length} pathPoints={lg.LevelPathPoints.Count} of {points.Length} monsters={enemies.Length}");
-            log.LogInfo($"[Probe] {name} pads: {(LiftService.Instance != null ? LiftService.Instance.Describe() : "no lift service")}");
+            log.LogInfo($"[Probe] {name} pads: {(LiftService.Instance != null ? LiftService.Instance.Describe() : "no lift service")} elevator={Elevator.Built} docks={Elevator.DockCount}");
             foreach (string pad in new[] { "ground", "upstairs", "basement" })
             {
                 if (LiftService.Instance != null && LiftService.Instance.TryGetPad(pad, out Vector3 pos))
@@ -132,6 +142,11 @@ namespace UpstairsProbe
                 yield break;
             }
 
+            if (Elevator.Built)
+            {
+                yield return ElevatorRides(name, me, ground, up);
+                yield break;
+            }
             Place(me, ground + Vector3.up * 0.2f);
             yield return new WaitForSecondsRealtime(3f);
             Verdict(name, "RIDE UP", me.transform.position, up);
@@ -168,6 +183,47 @@ namespace UpstairsProbe
                 yield return new WaitForSecondsRealtime(3f);
                 Verdict(name, "BASEMENT UP", me.transform.position, ground);
             }
+        }
+
+        // Stand in the car, press up, get carried; then press down, get carried back; then the void check.
+        private IEnumerator ElevatorRides(string name, PlayerAvatar me, Vector3 ground, Vector3 up)
+        {
+            Place(me, ground + Vector3.up * 0.2f);
+            yield return new WaitForSecondsRealtime(1f);
+            int upDock = DockNamed("upstairs");
+            log.LogInfo($"[Probe] {name} pressing up (dock {upDock}), inside={Elevator.IsInside(me.transform.position)}");
+            UpstairsNet.RequestRide(upDock);
+            float waited = 0f;
+            while (Elevator.Moving && waited < 30f) { yield return new WaitForSecondsRealtime(0.5f); waited += 0.5f; }
+            yield return new WaitForSecondsRealtime(1f);
+            Verdict(name, "ELEVATOR UP", me.transform.position, up);
+            UpstairsNet.RequestRide(DockNamed("ground"));
+            waited = 0f;
+            while (Elevator.Moving && waited < 30f) { yield return new WaitForSecondsRealtime(0.5f); waited += 0.5f; }
+            yield return new WaitForSecondsRealtime(1f);
+            Verdict(name, "ELEVATOR DOWN", me.transform.position, ground);
+            if (Session.Up != null)
+            {
+                var from = new Vector3(ground.x + 6f, Session.GroundTop + 2f, ground.z);
+                float roofY = Physics.Raycast(from, Vector3.down, out RaycastHit roof, 200f) ? roof.point.y : ground.y;
+                Place(me, new Vector3(from.x, roofY + 4f, from.z));
+                yield return new WaitForSecondsRealtime(6f);
+                bool inRoom = Physics.CheckSphere(me.transform.position + Vector3.up * 0.6f, 0.25f, LayerMask.GetMask("RoomVolume"), QueryTriggerInteraction.Collide);
+                if (inRoom)
+                    log.LogInfo($"[Probe] {name} VOID RESCUE n/a, the drop landed inside a room at {me.transform.position}");
+                else
+                    Verdict(name, "VOID RESCUE", me.transform.position, ground);
+            }
+        }
+
+        private static int DockNamed(string name)
+        {
+            LiftService? lift = LiftService.Instance;
+            if (lift == null) return -1;
+            string[] list = lift.Describe().Split('|');
+            for (int i = 0; i < list.Length; i++)
+                if (list[i].Trim().StartsWith(name + "@")) return i;
+            return -1;
         }
 
         // A tumbling player is carried by the tumble body, so Spawn alone would snap straight back.

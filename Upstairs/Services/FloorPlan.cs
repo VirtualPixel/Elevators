@@ -70,7 +70,9 @@ namespace Upstairs.Services
 
         // Grows a connected patch of cells out from the lift cell, only ever on top of active
         // ground cells, then classifies each cell the way the game's own generator would.
-        public static FloorPlan Build(bool[,] ground, int liftX, int liftY, int count, int passageMax, Random rng)
+        // liftAxisVertical: pin the lift cell as a passage whose doors only face along that axis, so the
+        // same elevator module can stand on every floor with its shafts lined up. Null leaves it free.
+        public static FloorPlan Build(bool[,] ground, int liftX, int liftY, int count, int passageMax, Random rng, bool? liftAxisVertical = null)
         {
             int width = ground.GetLength(0);
             int height = ground.GetLength(1);
@@ -100,14 +102,13 @@ namespace Upstairs.Services
                 stalls = 0;
             }
 
-            int passages = 0;
             for (int x = 0; x < width; x++)
             {
                 for (int y = 0; y < height; y++)
                 {
                     if (!taken[x, y])
                         continue;
-                    var cell = new Cell
+                    plan.grid[x, y] = new Cell
                     {
                         X = x,
                         Y = y,
@@ -116,8 +117,39 @@ namespace Upstairs.Services
                         Right = x + 1 < width && taken[x + 1, y],
                         Left = x - 1 >= 0 && taken[x - 1, y]
                     };
-                    Classify(cell, ref passages, passageMax, rng);
-                    plan.grid[x, y] = cell;
+                }
+            }
+
+            Cell lift = plan.grid[liftX, liftY]!;
+            if (liftAxisVertical == true)
+            {
+                Unlink(plan, lift, left: true);
+                Unlink(plan, lift, right: true);
+            }
+            else if (liftAxisVertical == false)
+            {
+                Unlink(plan, lift, top: true);
+                UnlinkBottom(plan, lift);
+            }
+
+            int passages = 0;
+            for (int x = 0; x < width; x++)
+            {
+                for (int y = 0; y < height; y++)
+                {
+                    Cell? cell = plan.grid[x, y];
+                    if (cell == null)
+                        continue;
+                    if (cell == lift && liftAxisVertical != null)
+                    {
+                        cell.Kind = Kind.Passage;
+                        cell.RotationY = liftAxisVertical == true ? 0f : 90f;
+                        passages++;
+                    }
+                    else
+                    {
+                        Classify(cell, ref passages, passageMax, rng);
+                    }
                     plan.Cells.Add(cell);
                     if (cell.Top)
                         plan.Doors.Add(new Door(x, y, rightEdge: false));
@@ -127,6 +159,29 @@ namespace Upstairs.Services
             }
             return plan;
         }
+
+        private static void Unlink(FloorPlan plan, Cell lift, bool left = false, bool top = false, bool right = false)
+        {
+            if (left || right)
+            {
+                Cell? side = plan.At(lift.X + (left ? -1 : 1), lift.Y);
+                if (left) lift.Left = false; else lift.Right = false;
+                if (side != null)
+                {
+                    if (left) side.Right = false; else side.Left = false;
+                }
+                return;
+            }
+            Cell? vert = plan.At(lift.X, lift.Y + (top ? 1 : -1));
+            if (top) lift.Top = false; else lift.Bottom = false;
+            if (vert != null)
+            {
+                if (top) vert.Bottom = false; else vert.Top = false;
+            }
+        }
+
+        // Unlink(top: false) means the bottom side; spelled out so the call sites read.
+        private static void UnlinkBottom(FloorPlan plan, Cell lift) => Unlink(plan, lift, top: false);
 
         // Same rules the game uses on the ground floor: a leaf is a dead end turned to face its
         // one neighbour, a straight run is a passage while the level still allows them, the

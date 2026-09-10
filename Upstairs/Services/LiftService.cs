@@ -22,6 +22,9 @@ namespace Upstairs.Services
         private sealed class Pad
         {
             public Vector3 Position;
+            // Somewhere to put a player near the pad that is definitely floor: the tumble and the
+            // rescue land here, since a shaft dock is an open hole once the car has left it.
+            public Vector3 Landing;
             public float Yaw;
             public string Name = "";
             public Pad? Up;
@@ -84,7 +87,7 @@ namespace Upstairs.Services
             pads.Clear();
             riders.Clear();
             groundPad = null;
-            LiftCars.Clear();
+            Elevator.Clear();
         }
 
         public void Setup()
@@ -144,7 +147,7 @@ namespace Upstairs.Services
         {
             Clear();
             foreach (LiftPayload.Pad p in payload.Pads)
-                pads.Add(new Pad { Name = p.Name, Position = new Vector3(p.X, p.Y, p.Z), Yaw = p.Yaw });
+                pads.Add(new Pad { Name = p.Name, Position = new Vector3(p.X, p.Y, p.Z), Landing = new Vector3(p.X, p.Y, p.Z), Yaw = p.Yaw });
             Pad? ground = pads.Find(p => p.Name == "ground");
             Pad? up = pads.Find(p => p.Name == "upstairs");
             Pad? down = pads.Find(p => p.Name == "basement");
@@ -160,16 +163,20 @@ namespace Upstairs.Services
 
         private void BuildCars()
         {
-            var spots = new List<(Vector3, float)>();
+            var spots = new List<(Vector3, float, string)>();
             foreach (Pad pad in pads)
-                spots.Add((pad.Position, pad.Yaw));
-            LiftCars.Build(spots);
+                spots.Add((pad.Position, pad.Yaw, pad.Name));
+            Elevator.Build(spots);
         }
 
         private void Update()
         {
-            if (SemiFunc.RunIsLevel())
-                LiftCars.Tick(Time.deltaTime);
+            if (SemiFunc.RunIsLevel() && Elevator.Built)
+            {
+                Elevator.Tick(Time.deltaTime);
+                if (GameDirector.instance != null && GameDirector.instance.currentState == GameDirector.gameState.Main)
+                    Elevator.CheckButtons();
+            }
             if (!active || !SemiFunc.IsMasterClientOrSingleplayer() || !SemiFunc.RunIsLevel())
                 return;
             if (GameDirector.instance == null || GameDirector.instance.currentState != GameDirector.gameState.Main)
@@ -206,13 +213,15 @@ namespace Upstairs.Services
                 Pad? here = PadUnder(pos);
                 if (here != null)
                 {
+                    if (Elevator.Built && UpstairsNet.IsModded(avatar))
+                        continue;
                     Pad? dest = avatar.isCrouching ? (here.Down ?? here.Up) : (here.Up ?? here.Down);
                     if (dest != null)
-                        Ride(avatar, rider, dest, cooldown, here);
+                        Ride(avatar, rider, dest, cooldown);
                     continue;
                 }
 
-                if (rescue && !InAnyRoom(pos) && !OnNavMesh(pos) && !IsFlying(avatar))
+                if (rescue && !InAnyRoom(pos) && !OnNavMesh(pos) && !Elevator.IsInside(pos) && !IsFlying(avatar))
                 {
                     rider.VoidTime += dt;
                     if (rider.VoidTime >= VoidPatience)
@@ -228,24 +237,16 @@ namespace Upstairs.Services
             }
         }
 
-        // A rider running the mod gets the elevator: doors, fade, and their own client moves them.
-        // Anyone else gets the game's void-rescue tumble, which needs nothing on their end.
-        private void Ride(PlayerAvatar avatar, Rider rider, Pad dest, float cooldown, Pad? from = null)
+        // The game's void-rescue tumble. Players with the mod ride the car instead; this is for
+        // anyone without it, and for whoever ends up outside every room.
+        private void Ride(PlayerAvatar avatar, Rider rider, Pad dest, float cooldown)
         {
-            if (UpstairsNet.IsModded(avatar) && LiftCars.Count == pads.Count)
-            {
-                UpstairsNet.SendRide(UpstairsNet.ActorOf(avatar), from != null ? pads.IndexOf(from) : -1, pads.IndexOf(dest));
-                avatar.FallDamageResetSet(3f);
-            }
-            else
-            {
-                PlayerTumble tumble = avatar.tumble;
-                tumble.TumbleSet(_isTumbling: true, _playerInput: false);
-                tumble.physGrabObject.Teleport(dest.Position + Vector3.up * 0.4f, avatar.transform.rotation);
-                tumble.physGrabObject.rb.velocity = Vector3.zero;
-                tumble.physGrabObject.rb.angularVelocity = Vector3.zero;
-                avatar.FallDamageResetSet(2f);
-            }
+            PlayerTumble tumble = avatar.tumble;
+            tumble.TumbleSet(_isTumbling: true, _playerInput: false);
+            tumble.physGrabObject.Teleport(dest.Landing + Vector3.up * 0.4f, avatar.transform.rotation);
+            tumble.physGrabObject.rb.velocity = Vector3.zero;
+            tumble.physGrabObject.rb.angularVelocity = Vector3.zero;
+            avatar.FallDamageResetSet(2f);
             rider.CooldownUntil = Time.time + cooldown;
             rider.MustLeave = dest;
             rider.VoidTime = 0f;
@@ -349,6 +350,11 @@ namespace Upstairs.Services
                 return null;
             LiftSite? site = Session.Site;
             Vector3 spot;
+            if (site != null && site.Shaft && ShaftDock(module, out Vector3 dock, out float shaftYaw))
+            {
+                NearestPoint(module, dock, out Vector3 landing);
+                return new Pad { Position = dock, Landing = OnNavMesh(landing, 2f), Name = "ground", Yaw = shaftYaw };
+            }
             if (site != null && !site.PadAtHighestPoint)
                 spot = module.transform.TransformPoint(new Vector3(site.PadX, site.PadY, site.PadZ));
             else if (site != null && site.PadAtHighestPoint && HighestPoint(module, out Vector3 top))
@@ -356,7 +362,7 @@ namespace Upstairs.Services
             else if (!NearestPoint(module, module.transform.position, out spot))
                 return null;
             Vector3 at = OnNavMesh(spot, 2f);
-            return new Pad { Position = at, Name = "ground", Yaw = FacingAway(module.transform.position, at) };
+            return new Pad { Position = at, Landing = at, Name = "ground", Yaw = FacingAway(module.transform.position, at) };
         }
 
         private static Pad? FloorPad(Floor floor, Vector3 groundSpot)
@@ -365,9 +371,30 @@ namespace Upstairs.Services
             if (module == null)
                 return null;
             Vector3 center = module.transform.position;
+            if (Session.Site != null && Session.Site.Shaft && ShaftDock(module, out Vector3 dock, out float shaftYaw))
+            {
+                NearestPoint(module, dock, out Vector3 landing);
+                return new Pad { Position = dock, Landing = OnNavMesh(landing, 2f), Name = floor.Name, Yaw = shaftYaw };
+            }
             if (!NearestPoint(module, new Vector3(groundSpot.x, center.y, groundSpot.z), out Vector3 spot))
                 spot = OnNavMesh(center, 6f);
-            return new Pad { Position = spot, Name = floor.Name, Yaw = FacingAway(center, spot) };
+            return new Pad { Position = spot, Landing = spot, Name = floor.Name, Yaw = FacingAway(center, spot) };
+        }
+
+        // Where the room's own elevator car sits, at the room's floor level, turned the way the car is.
+        private static bool ShaftDock(Module module, out Vector3 dock, out float yaw)
+        {
+            foreach (Transform t in module.GetComponentsInChildren<Transform>(true))
+            {
+                if (t.name != Elevator.CarriageName)
+                    continue;
+                dock = new Vector3(t.position.x, module.transform.position.y, t.position.z);
+                yaw = t.eulerAngles.y;
+                return true;
+            }
+            dock = Vector3.zero;
+            yaw = 0f;
+            return false;
         }
 
         private static bool HighestPoint(Module module, out Vector3 spot)

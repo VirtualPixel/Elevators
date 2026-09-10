@@ -17,7 +17,7 @@ namespace Upstairs.Services
             public int I1, I2, I3, O1, O2, O3;
         }
 
-        public static IEnumerator Build(LevelGenerator lg, Floor floor, float groundTop, float groundBottom, List<string> avoid)
+        public static IEnumerator Build(LevelGenerator lg, Floor floor, float groundTop, float groundBottom, List<string> avoid, PrefabRef? liftPrefab = null, float liftRotation = 0f)
         {
             Level level = lg.Level;
             Pool normal = MakePool(level.ModulesNormal1, level.ModulesNormal2, level.ModulesNormal3, avoid);
@@ -34,6 +34,17 @@ namespace Upstairs.Services
             float pickTop = float.MinValue;
             foreach (FloorPlan.Cell cell in floor.Plan.Cells)
             {
+                if (liftPrefab != null && cell.X == floor.Plan.LiftX && cell.Y == floor.Plan.LiftY)
+                {
+                    cell.RotationY = liftRotation;
+                    picks.Add(liftPrefab);
+                    if (ModuleExtents.TryMeasure(liftPrefab.Prefab, out float lb, out float lt))
+                    {
+                        if (lb < pickBottom) pickBottom = lb;
+                        if (lt > pickTop) pickTop = lt;
+                    }
+                    continue;
+                }
                 Pool pool = cell.Kind switch
                 {
                     FloorPlan.Kind.Passage when passage.L1.Count > 0 => passage,

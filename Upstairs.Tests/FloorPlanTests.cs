@@ -120,3 +120,39 @@ namespace Upstairs.Tests
         }
     }
 }
+
+namespace Upstairs.Tests
+{
+    public class FloorPlanLiftAxisTests
+    {
+        [Fact]
+        public void PinnedLiftCellIsAPassageWithSideDoorsRemoved()
+        {
+            var g = new bool[3, 3];
+            for (int x = 0; x < 3; x++) for (int y = 0; y < 3; y++) g[x, y] = true;
+            FloorPlan plan = FloorPlan.Build(g, 1, 1, 9, 5, new Random(3), liftAxisVertical: true);
+            FloorPlan.Cell lift = plan.At(1, 1)!;
+            Assert.Equal(FloorPlan.Kind.Passage, lift.Kind);
+            Assert.Equal(0f, lift.RotationY);
+            Assert.False(lift.Left);
+            Assert.False(lift.Right);
+            Assert.False(plan.At(0, 1)!.Right);
+            Assert.False(plan.At(2, 1)!.Left);
+            Assert.DoesNotContain(plan.Doors, d => d.RightEdge && d.Y == 1 && (d.X == 0 || d.X == 1));
+        }
+
+        [Fact]
+        public void HorizontalPinTurnsTheLift()
+        {
+            var g = new bool[3, 3];
+            for (int x = 0; x < 3; x++) for (int y = 0; y < 3; y++) g[x, y] = true;
+            FloorPlan plan = FloorPlan.Build(g, 1, 1, 9, 5, new Random(3), liftAxisVertical: false);
+            FloorPlan.Cell lift = plan.At(1, 1)!;
+            Assert.Equal(90f, lift.RotationY);
+            Assert.False(lift.Top);
+            Assert.False(lift.Bottom);
+            Assert.False(plan.At(1, 2)!.Bottom);
+            Assert.False(plan.At(1, 0)!.Top);
+        }
+    }
+}

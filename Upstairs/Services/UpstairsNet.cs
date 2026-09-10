@@ -118,19 +118,36 @@ namespace Upstairs.Services
             Plugin.LogInfo($"[Net] applied host's floors for {payload.Level}: {payload.Pads.Count} pads");
         }
 
-        internal static void SendRide(int actor, int from, int to)
+        // Host to everyone: the car leaves dock `from` for dock `to`.
+        internal static void SendRide(int from, int to)
         {
             if (SemiFunc.IsMultiplayer() && Instance != null)
-                Instance.photonView.RPC(nameof(UpstairsRideRPC), RpcTarget.All, actor, from, to);
+                Instance.photonView.RPC(nameof(UpstairsRideRPC), RpcTarget.All, from, to);
             else
-                LiftCars.PlayRide(actor, from, to);
+                Elevator.PlayRide(from, to);
         }
 
         [PunRPC]
-        private void UpstairsRideRPC(int actor, int from, int to, PhotonMessageInfo _info = default(PhotonMessageInfo))
+        private void UpstairsRideRPC(int from, int to, PhotonMessageInfo _info = default(PhotonMessageInfo))
         {
             if (SemiFunc.MasterOnlyRPC(_info))
-                LiftCars.PlayRide(actor, from, to);
+                Elevator.PlayRide(from, to);
+        }
+
+        // A button press, from any client to the host, who decides if the car can go.
+        internal static void RequestRide(int dock)
+        {
+            if (SemiFunc.IsMasterClientOrSingleplayer())
+                Elevator.TryDepart(dock);
+            else if (Instance != null)
+                Instance.photonView.RPC(nameof(UpstairsCallRPC), RpcTarget.MasterClient, dock);
+        }
+
+        [PunRPC]
+        private void UpstairsCallRPC(int dock, PhotonMessageInfo _info = default(PhotonMessageInfo))
+        {
+            if (PhotonNetwork.IsMasterClient)
+                Elevator.TryDepart(dock);
         }
     }
 }

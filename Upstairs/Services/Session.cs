@@ -32,6 +32,7 @@ namespace Upstairs.Services
         private static PrefabRef? sitePrefab;
         private static Module.Type liftType;
         private static int roomsFromTruck;
+        private static bool? liftAxisVertical;
 
         public static void Reset()
         {
@@ -44,6 +45,7 @@ namespace Upstairs.Services
             Site = null;
             sitePrefab = null;
             Override = null;
+            liftAxisVertical = null;
             Hint = "";
             GroundTop = 0f;
             GroundBottom = 0f;
@@ -113,10 +115,11 @@ namespace Upstairs.Services
 
             int count = FloorGap.CellCount(activeCells, PluginConfig.FloorSize.Value);
             int passageMax = lg.Level.PassageMaxAmount;
+            bool? axis = Site != null && Site.Shaft ? liftAxisVertical : null;
             if (PluginConfig.UpperFloor.Value)
-                UpPlan = FloorPlan.Build(ground, LiftX, LiftY, count, passageMax, rng);
+                UpPlan = FloorPlan.Build(ground, LiftX, LiftY, count, passageMax, rng, axis);
             if (PluginConfig.Basement.Value)
-                DownPlan = FloorPlan.Build(ground, LiftX, LiftY, count, passageMax, rng);
+                DownPlan = FloorPlan.Build(ground, LiftX, LiftY, count, passageMax, rng, axis);
             roomsFromTruck = RoomsFromTruck(ground, width / 2, 0, LiftX, LiftY);
             Hint = Site?.Hint ?? FallbackHint();
             Active = true;
@@ -136,19 +139,34 @@ namespace Upstairs.Services
             Site = null;
             sitePrefab = null;
             Hint = FallbackHint();
+            if (UpPlan != null) UpPlan = null;
+            if (DownPlan != null) DownPlan = null;
+            Active = false;
         }
 
         public static IEnumerator BuildFloors(LevelGenerator lg)
         {
             MeasureGround();
             List<string> avoid = RoomFilter.Parse(PluginConfig.AvoidRooms.Value);
+            // A shaft site stands the same elevator room on every floor, turned the way the ground one landed.
+            PrefabRef? liftPrefab = null;
+            float liftRotation = 0f;
+            if (Site != null && Site.Shaft && sitePrefab != null)
+            {
+                Module? groundLift = GroundLiftModule();
+                if (groundLift != null && groundLift.name.StartsWith(Site.ModuleName))
+                {
+                    liftPrefab = sitePrefab;
+                    liftRotation = groundLift.transform.eulerAngles.y;
+                }
+            }
             // Each floor is published before its rooms spawn, so the rooms' own setup (room volumes,
             // the map) already knows which floor they belong to.
             if (UpPlan != null)
             {
                 Up = new Floor(UpPlan, above: true);
                 SpanUnder(UpPlan, out float top, out float bottom);
-                IEnumerator build = FloorBuilder.Build(lg, Up, top, bottom, avoid);
+                IEnumerator build = FloorBuilder.Build(lg, Up, top, bottom, avoid, liftPrefab, liftRotation);
                 while (build.MoveNext())
                     yield return build.Current;
                 if (Up.Modules.Count == 0)
@@ -158,7 +176,7 @@ namespace Upstairs.Services
             {
                 Down = new Floor(DownPlan, above: false);
                 SpanUnder(DownPlan, out float top, out float bottom);
-                IEnumerator build = FloorBuilder.Build(lg, Down, top, bottom, avoid);
+                IEnumerator build = FloorBuilder.Build(lg, Down, top, bottom, avoid, liftPrefab, liftRotation);
                 while (build.MoveNext())
                     yield return build.Current;
                 if (Down.Modules.Count == 0)
@@ -271,6 +289,8 @@ namespace Upstairs.Services
                     // Straight cells go first in the game's own scan order, which is also where its
                     // passage budget is most likely to still be open.
                     (LiftX, LiftY) = Site.Kind == FloorPlan.Kind.Passage ? wanted[0] : wanted[rng.Next(wanted.Count)];
+                    if (Site.Kind == FloorPlan.Kind.Passage)
+                        liftAxisVertical = Has(ground, LiftX, LiftY + 1) && Has(ground, LiftX, LiftY - 1);
                     liftType = Site.Kind switch
                     {
                         FloorPlan.Kind.Passage => Module.Type.Passage,

@@ -6,13 +6,13 @@ Every level gets another floor. Same rooms the level already uses, same doors, s
 
 ## The elevator
 
-The game's own elevator car, the one from the Museum, stands on each floor. A line at the bottom of the HUD points at the nearest one with the distance. Walk up and the doors slide open. Step in and stand still: doors shut, the screen goes dark for a moment, and you step out on the floor above. With a basement on, crouch in the car to go down instead.
+The game's own elevator car, the one from the Museum, with a light inside and two buttons on the wall by the doors. A line at the bottom of the HUD points at it with the distance. Walk up and the doors slide open. Step in, look at the up or down button and grab it: the doors shut and the car rides the shaft to the next floor, you along with it, and the doors open again up there. Each floor has a call button on a post beside the dock, so you can bring the car to you.
 
-Anyone in the lobby without the mod still gets moved: they stand on the same spot and the host tumbles them up, the way the game pulls a player out of the void. They just do not see the car.
+Anyone in the lobby without the mod still gets moved: they stand where the car docks and the host tumbles them up, the way the game pulls a player out of the void. They do not see the car and cannot ride it.
 
 Where the elevator stands:
 
-- Museum: in the corridor beside the elevator shaft.
+- Museum: the real thing. The level's own elevator room stands on every floor with its shafts lined up, the stuck car is gone, its doors become landing doors, and the elevator rides the actual shaft.
 - Manor: at the top of the long stairs.
 - Arctic: the top of the stair corridor.
 - Wizard: up in the upstairs classroom.
@@ -49,7 +49,7 @@ The game does not always roll those rooms, and when it does not you get the plai
 ## Known rough edges
 
 - The map shows the floor you are on. Late joiners may see both floors' room outlines on one layer for that level.
-- The car sits on the floor with no shaft above it. The floors are 40 m apart, so the ride is a fade, not a climb.
+- Outside the Museum the shaft is a plain dark box built around the path, since the level has nothing between the floors. The car and buttons are the game's own Museum assets, so they look the same on every map.
 - The Museum elevator car stays stuck where the game left it. The lift pad is in the corridor at the shaft mouth, not inside the car.
 - Levels from other mods work as long as they use the game's normal room lists.
 

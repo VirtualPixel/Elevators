@@ -12,7 +12,8 @@ namespace Upstairs.Tests
             Assert.NotNull(site);
             Assert.Equal(FloorPlan.Kind.Passage, site!.Kind);
             Assert.False(site.PadAtHighestPoint);
-            Assert.Equal("beside the elevator shaft", site.Hint);
+            Assert.Equal("in the elevator", site.Hint);
+            Assert.True(site.Shaft);
         }
 
         [Theory]
