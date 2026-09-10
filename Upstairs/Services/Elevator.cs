@@ -1381,8 +1381,34 @@ namespace Upstairs.Services
 
         private static System.Collections.IEnumerator Patrol(EnemyParent rider, int from, int to)
         {
-            Plugin.LogInfo($"[Elevator] {rider.enemyName} takes the elevator {docks[from].Name} -> {docks[to].Name}");
-            EnemyDirector.instance?.SetInvestigate(docks[from].Landing, 6f);
+            Plugin.LogInfo($"[Elevator] {rider.enemyName} heads for the elevator at {docks[from].Name}, bound for {docks[to].Name}");
+            // The monster walks to the call button first; nothing happens until it is in reach.
+            LiftButton? call = null;
+            foreach (LiftButton b in Object.FindObjectsOfType<LiftButton>())
+                if (b.Kind == ButtonKind.Call && b.Dock == from && b.Attached) { call = b; break; }
+            Vector3 buttonAt = call != null ? call.transform.position : docks[from].Landing;
+            if (rider.Enemy.HasStateInvestigate)
+                rider.Enemy.StateInvestigate.Set(docks[from].Landing, false);
+            float walked = 0f;
+            while (walked < 25f)
+            {
+                yield return new WaitForSeconds(0.5f);
+                walked += 0.5f;
+                if (rider == null || !rider.Spawned || rider.Enemy == null || rider.Enemy.CheckChase())
+                    yield break;
+                if (Vector3.Distance(rider.Enemy.transform.position, buttonAt) < 3f)
+                    break;
+                if (walked % 8f < 0.5f && rider.Enemy.HasStateInvestigate)
+                    rider.Enemy.StateInvestigate.Set(docks[from].Landing, false);
+            }
+            if (rider == null || !rider.Spawned || rider.Enemy == null || Vector3.Distance(rider.Enemy.transform.position, buttonAt) >= 3f)
+                yield break;
+            if (Moving)
+                yield break;
+            // Its press: the click, and the car comes or the doors open.
+            if (call != null)
+                Press(call);
+            Plugin.LogInfo($"[Elevator] {rider.enemyName} pressed the call button at {docks[from].Name}");
             if (atDock != from)
             {
                 if (!TryDepart(from))
@@ -1391,26 +1417,15 @@ namespace Upstairs.Services
                 while ((Moving || atDock != from) && t < 40f) { t += 0.5f; yield return new WaitForSeconds(0.5f); }
                 if (atDock != from || Moving)
                     yield break;
+                // The landing pause opens the doors on its own.
+                yield return new WaitForSeconds(LandPause + 0.5f);
             }
-            // Doors open, and the monster walks up to them while they stand open.
-            openHold = 25f;
+            else
+                openHold = OpenHoldTime;
+            openHold = Mathf.Max(openHold, 6f);
             if (rider.Enemy.HasStateInvestigate)
                 rider.Enemy.StateInvestigate.Set(docks[from].Landing, false);
-            float walked = 0f;
-            while (walked < 20f)
-            {
-                yield return new WaitForSeconds(0.5f);
-                walked += 0.5f;
-                if (rider == null || !rider.Spawned || rider.Enemy == null || Moving || atDock != from)
-                {
-                    openHold = 0f;
-                    yield break;
-                }
-                if (Vector3.Distance(rider.Enemy.transform.position, docks[from].Landing) < 2.5f)
-                    break;
-                if (walked >= 8f && rider.Enemy.HasStateInvestigate)
-                    rider.Enemy.StateInvestigate.Set(docks[from].Landing, false);
-            }
+            yield return new WaitForSeconds(2f);
             if (rider == null || !rider.Spawned || rider.Enemy == null || Moving || atDock != from)
             {
                 openHold = 0f;
