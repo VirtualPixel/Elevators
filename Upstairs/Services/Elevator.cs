@@ -578,6 +578,7 @@ namespace Upstairs.Services
             hatchWantOpen = false;
             hatchHeld = false;
             docks.Clear();
+            shutBoxes.Clear();
             atDock = -1;
             toDock = -1;
             localRiding = false;
@@ -762,6 +763,8 @@ namespace Upstairs.Services
             lastCarPos = holder.transform.position;
             doorL = body.transform.Find("Museum Elevator door (1)");
             doorR = body.transform.Find("Museum Elevator door");
+            if (doorL != null) SoftDoor(doorL);
+            if (doorR != null) SoftDoor(doorR);
             if (doorL != null) closedL = ClosedAt(doorL, left: true);
             if (doorR != null) closedR = ClosedAt(doorR, left: false);
             if (doorL != null) doorL.localPosition = closedL;
@@ -840,7 +843,45 @@ namespace Upstairs.Services
             StripScripts(copy);
             copy.transform.localRotation = door.localRotation;
             copy.transform.localPosition = door.localPosition + Vector3.back * 0.18f;
+            SoftDoor(copy.transform);
             return copy.transform;
+        }
+
+        // A sliding door at two metres a second was sweeping through loot left at the threshold
+        // and chipping it. The door's own colliders now stop only players, and a second box that
+        // stops everything comes on once the door is fully shut, so nothing rolls into the shaft.
+        private static readonly List<(Transform door, Collider shut)> shutBoxes = new List<(Transform, Collider)>();
+
+        private static void SoftDoor(Transform door)
+        {
+            int playerOnly = LayerMask.NameToLayer("PlayerOnlyCollision");
+            if (playerOnly < 0)
+                return;
+            foreach (Collider c in door.GetComponentsInChildren<Collider>(true))
+                c.gameObject.layer = playerOnly;
+            MeshFilter filter = door.GetComponent<MeshFilter>();
+            if (filter == null || filter.sharedMesh == null)
+                return;
+            var shut = new GameObject("shut");
+            shut.transform.SetParent(door, false);
+            shut.layer = 0;
+            var box = shut.AddComponent<BoxCollider>();
+            box.center = filter.sharedMesh.bounds.center;
+            box.size = filter.sharedMesh.bounds.size;
+            // Doors are built shut.
+            box.enabled = true;
+            shutBoxes.Add((door, box));
+        }
+
+        private static void ShutBox(Transform? door, bool shut)
+        {
+            if (door == null)
+                return;
+            foreach ((Transform d, Collider box) in shutBoxes)
+            {
+                if (d == door && box != null && box.enabled != shut)
+                    box.enabled = shut;
+            }
         }
 
         // The prefab parks its doors ajar. Shut means the two inner edges meet in the middle, so the
@@ -1499,6 +1540,8 @@ namespace Upstairs.Services
                 doorOpen = open;
                 if (doorL != null) doorL.localPosition = closedL + Vector3.left * (DoorSlide * open);
                 if (doorR != null) doorR.localPosition = closedR + Vector3.right * (DoorSlide * open);
+                ShutBox(doorL, open == 0f);
+                ShutBox(doorR, open == 0f);
             }
 
             // Landing doors follow the car's doors, but only at the dock the car is standing in.
@@ -1512,6 +1555,8 @@ namespace Upstairs.Services
                 if (now == dock.LandingOpen)
                     continue;
                 dock.LandingOpen = now;
+                ShutBox(dock.LandingL, now == 0f);
+                ShutBox(dock.LandingR, now == 0f);
                 if (dock.LandingL != null) dock.LandingL.localPosition = dock.LandingClosedL + Vector3.left * (DoorSlide * now);
                 if (dock.LandingR != null) dock.LandingR.localPosition = dock.LandingClosedR + Vector3.right * (DoorSlide * now);
             }
