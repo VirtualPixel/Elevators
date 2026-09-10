@@ -168,14 +168,19 @@ namespace Upstairs.Patches
             TMP_Text text = go.GetComponent<TMP_Text>();
             text.alignment = TextAlignmentOptions.TopLeft;
             text.enableWordWrapping = false;
-            text.fontSize = source.fontSize * 0.8f;
+            text.fontSize = source.fontSize;
             // The map draws in one green; the player dot carries it as a plain colour.
             SpriteRenderer? dot = map.PlayerGraphicTransform != null ? map.PlayerGraphicTransform.GetComponentInChildren<SpriteRenderer>(true) : null;
             Color tint = dot != null ? dot.color : new Color(0.55f, 1f, 0.6f);
             tint.a = 1f;
             text.color = tint;
-            if (text.fontMaterial != null && text.fontMaterial.HasProperty("_FaceColor"))
-                text.fontMaterial.SetColor("_FaceColor", tint);
+            // The disabled sign uses the lit surface shader, black under the map camera's ambient.
+            // The font's own material is the plain unlit one.
+            Material face = text.font != null && text.font.material != null ? new Material(text.font.material) : text.fontMaterial;
+            if (face != null && face.HasProperty("_FaceColor"))
+                face.SetColor("_FaceColor", tint);
+            if (face != null)
+                text.fontMaterial = face;
             RectTransform rect = go.GetComponent<RectTransform>();
             float halfH = cam.orthographicSize;
             float halfW = halfH * cam.aspect;
