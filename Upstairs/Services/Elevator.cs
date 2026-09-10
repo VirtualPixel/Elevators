@@ -27,7 +27,8 @@ namespace Upstairs.Services
             Call,
             Up,
             Down,
-            Hatch
+            Hatch,
+            Open
         }
 
         // Drives the car from FixedUpdate so the player standing in it is moved in physics time.
@@ -346,7 +347,7 @@ namespace Upstairs.Services
                 }
                 StaticGrabObject grab = button.GetComponent<StaticGrabObject>();
                 if (grab != null)
-                    grab.hoverText = button.Kind switch { ButtonKind.Up => "Up", ButtonKind.Down => "Down", ButtonKind.Hatch => "Roof hatch", _ => "Call the elevator" };
+                    grab.hoverText = button.Kind switch { ButtonKind.Up => "Up", ButtonKind.Down => "Down", ButtonKind.Hatch => "Roof hatch", ButtonKind.Open => "Open the doors", _ => "Call the elevator" };
                 loose.Remove(button);
                 return;
             }
@@ -471,6 +472,13 @@ namespace Upstairs.Services
         {
             if (car == null)
                 return false;
+            if (button.Kind == ButtonKind.Open)
+            {
+                if (Moving)
+                    return false;
+                openHold = OpenHoldTime;
+                return true;
+            }
             if (Moving)
             {
                 int next = button.Kind switch
@@ -744,6 +752,9 @@ namespace Upstairs.Services
             Transform panel = Panel(body.transform, new Vector3(wallX - 0.02f, -0.5f, -0.6f), Quaternion.LookRotation(Vector3.left), 0.9f);
             AddSlot(panel, new Vector3(0f, 0.28f, 0.02f), ButtonKind.Up, -1, "UP");
             AddSlot(panel, new Vector3(0f, -0.12f, 0.02f), ButtonKind.Down, -1, "DOWN");
+            // The other wall holds the door button.
+            Transform other = Panel(body.transform, new Vector3(-(wallX - 0.02f), -0.5f, -0.6f), Quaternion.LookRotation(Vector3.right), 0.44f);
+            AddSlot(other, new Vector3(0f, 0.08f, 0.02f), ButtonKind.Open, -1, "OPEN");
             var panelLight = new GameObject("panel light").AddComponent<Light>();
             panelLight.transform.SetParent(body.transform, false);
             panelLight.transform.localPosition = new Vector3(wallX - 0.35f, -0.4f, -0.6f);
@@ -1963,6 +1974,7 @@ namespace Upstairs.Services
             {
                 ButtonKind.Up => "up",
                 ButtonKind.Down => "down",
+                ButtonKind.Open => "open the doors",
                 ButtonKind.Hatch => hatchRef != null ? "swing the hatch" : hatchWantOpen ? "close the hatch" : "open the hatch",
                 _ => "call"
             };
