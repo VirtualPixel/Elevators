@@ -24,7 +24,7 @@ The game does not always roll those rooms, and when it does not you get the plai
 - Extraction points stay on the ground floor. The haul loop is untouched.
 - The ground floor keeps its normal loot. The new floors get `ExtraLoot` percent of that on top, placed the way the game places its own. The quota grows with them the way it does with any valuable.
 - Monsters spawn and roam on the ground floor only, unless you turn `EnemiesOnNewFloors` on. A ride up is a real escape.
-- The gap between floors is measured per level from the tallest and deepest rooms in play, so a catwalk never pokes through the floor above. If you somehow end up outside every room, on a roof between floors say, the lift catches you after a couple of seconds and puts you back on the ground pad.
+- The gap between floors is measured per level from the tallest and deepest rooms in play, so a catwalk never pokes through the floor above. If you somehow end up outside every room and off the navmesh, on a roof between floors say, the lift catches you after a few seconds and puts you back on the ground pad. FreeFly flyers are left alone.
 
 ## Settings
 

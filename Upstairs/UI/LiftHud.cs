@@ -74,7 +74,15 @@ namespace Upstairs.UI
             flat.y = 0f;
             float distance = flat.magnitude;
             if (distance < HideWithin && Mathf.Abs(rise) < 2f)
-                return string.Empty;
+            {
+                return lift.LocalPadStatus() switch
+                {
+                    "latched" => "LIFT  step off and back on to ride again",
+                    "cooldown" => "LIFT  one moment",
+                    "ride" => "LIFT  stand still",
+                    _ => string.Empty
+                };
+            }
 
             Vector3 forward = cam.transform.forward;
             forward.y = 0f;

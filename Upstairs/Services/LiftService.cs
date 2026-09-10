@@ -14,10 +14,10 @@ namespace Upstairs.Services
     {
         internal static LiftService? Instance { get; private set; }
 
-        private const float PadRadius = 1.3f;
+        private const float PadRadius = 1.6f;
         private const float PadHeight = 1.6f;
         private const float LeaveMargin = 0.7f;
-        private const float VoidPatience = 2f;
+        private const float VoidPatience = 3f;
 
         private sealed class Pad
         {
@@ -42,7 +42,8 @@ namespace Upstairs.Services
         private float tick;
 
         // FreeFly (a sibling mod) keeps a flying host outside every room on purpose; ask it before rescuing anyone.
-        private static readonly MethodInfo? flying = ResolveFlying();
+        private static MethodInfo? flying;
+        private static bool flyingResolved;
 
         private void Awake()
         {
@@ -50,16 +51,30 @@ namespace Upstairs.Services
             roomMask = LayerMask.GetMask("RoomVolume");
         }
 
-        private static MethodInfo? ResolveFlying()
-        {
-            var type = AccessTools.TypeByName("FreeFly.Services.FlyNet");
-            MethodInfo? method = type == null ? null : AccessTools.Method(type, "IsFlying", new[] { typeof(PlayerAvatar) });
-            return method != null && method.IsStatic && method.ReturnType == typeof(bool) ? method : null;
-        }
-
         private static bool IsFlying(PlayerAvatar avatar)
         {
+            if (!flyingResolved)
+            {
+                flyingResolved = true;
+                var type = AccessTools.TypeByName("FreeFly.Services.FlyNet");
+                MethodInfo? method = type == null ? null : AccessTools.Method(type, "IsFlying", new[] { typeof(PlayerAvatar) });
+                flying = method != null && method.IsStatic && method.ReturnType == typeof(bool) ? method : null;
+                Plugin.LogInfo(flying != null ? "[Lift] FreeFly found, flyers are never rescued" : "[Lift] FreeFly not present");
+            }
             return flying != null && (bool)flying.Invoke(null, new object[] { avatar });
+        }
+
+        // What the HUD says when the local player is standing at a pad.
+        internal string LocalPadStatus()
+        {
+            PlayerAvatar me = PlayerAvatar.instance;
+            if (me == null || PadUnder(me.transform.position) == null)
+                return "";
+            if (!riders.TryGetValue(me, out Rider rider))
+                return "ride";
+            if (rider.MustLeave != null)
+                return "latched";
+            return Time.time < rider.CooldownUntil ? "cooldown" : "ride";
         }
 
         public void Clear()
@@ -151,7 +166,7 @@ namespace Upstairs.Services
                     continue;
                 }
 
-                if (rescue && !InAnyRoom(pos) && !IsFlying(avatar))
+                if (rescue && !InAnyRoom(pos) && !OnNavMesh(pos) && !IsFlying(avatar))
                 {
                     rider.VoidTime += dt;
                     if (rider.VoidTime >= VoidPatience)
@@ -256,6 +271,12 @@ namespace Upstairs.Services
         private bool InAnyRoom(Vector3 pos)
         {
             return Physics.CheckSphere(pos + Vector3.up * 0.6f, 0.25f, roomMask, QueryTriggerInteraction.Collide);
+        }
+
+        // Standing on the navmesh means standing somewhere the level meant you to be, room volume or not.
+        private static bool OnNavMesh(Vector3 pos)
+        {
+            return NavMesh.SamplePosition(pos, out NavMeshHit hit, 1.2f, NavMesh.AllAreas) && Mathf.Abs(hit.position.y - pos.y) < 1.2f;
         }
 
         private static float Flat(Vector3 a, Vector3 b)
