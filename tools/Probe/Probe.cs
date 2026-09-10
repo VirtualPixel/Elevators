@@ -7,6 +7,7 @@ using HarmonyLib;
 using UnityEngine;
 using UnityEngine.AI;
 using Elevators.Services;
+using Elevators.Configuration;
 
 namespace ElevatorsProbe
 {
@@ -491,29 +492,48 @@ namespace ElevatorsProbe
         // at the landing, and on its own it presses the call button and rides between floors.
         private IEnumerator MonsterTests(string name, PlayerAvatar me, Vector3 ground, Vector3 up, int upDock)
         {
+            // A walker that investigates, the quick ones first; the slow ones would time the walk out.
             EnemyParent? monster = null;
+            string[] quick = { "Rugrat", "Gnome", "Robe", "Huntsman", "Reaper", "Upscream", "Animal", "Spewer", "Head" };
             if (EnemyDirector.instance != null)
             {
+                int bestRank = int.MaxValue;
                 foreach (EnemyParent p in EnemyDirector.instance.enemiesSpawned)
                 {
-                    if (p != null && p.Spawned && p.Enemy != null && p.Enemy.HasStateInvestigate && p.Enemy.GetComponentInChildren<EnemyThinMan>(true) == null)
-                    {
-                        monster = p;
-                        break;
-                    }
+                    if (p == null || !p.Spawned || p.Enemy == null || !p.Enemy.HasStateInvestigate || p.Enemy.GetComponentInChildren<EnemyThinMan>(true) != null)
+                        continue;
+                    int rank = System.Array.FindIndex(quick, q => p.enemyName != null && p.enemyName.Contains(q));
+                    if (rank < 0) rank = quick.Length;
+                    if (rank < bestRank) { bestRank = rank; monster = p; }
                 }
             }
+            int groundDock = DockNamed("ground");
+            Vector3 groundLanding = Elevator.LandingOf("ground");
+            Vector3 upLanding = Elevator.LandingOf("upstairs");
+            // A known chaser of our own, spawned the way the level spawns them, beats whatever rolled.
+            EnemyParent? summoned = null;
+            yield return Summon(name, groundLanding, p => summoned = p);
+            if (summoned != null)
+                monster = summoned;
             if (monster == null)
             {
                 log.LogWarning($"[Probe] {name} MONSTER: nothing spawned to test with");
                 yield break;
             }
-            int groundDock = DockNamed("ground");
-            Vector3 groundLanding = Elevator.LandingOf("ground");
-            Vector3 upLanding = Elevator.LandingOf("upstairs");
+            float patrolInterval = PluginConfig.MonsterPatrolInterval.Value;
+            yield return HoldPatrols();
+            if (Elevator.CurrentDock != groundDock)
+            {
+                ElevatorsNet.RequestRide(groundDock);
+                float w = 0f;
+                yield return new WaitForSecondsRealtime(1.5f);
+                while (Elevator.Moving && w < 40f) { yield return new WaitForSecondsRealtime(0.5f); w += 0.5f; }
+                yield return new WaitForSecondsRealtime(2f);
+            }
             Place(me, ground + Vector3.up * 0.6f);
             yield return new WaitForSecondsRealtime(1f);
-            monster.Enemy.EnemyTeleported(groundLanding);
+            yield return PutMonster(name, monster, groundLanding, "WALK IN setup");
+            log.LogInfo($"[Probe] {name} MONSTER {monster.enemyName} spawned={monster.Spawned} state={monster.Enemy.CurrentState} at {monster.Enemy.transform.position}, landing {groundLanding}");
             // Standing at the shut doors it presses the call button on its own.
             float knock = 0f;
             while (knock < 8f && Elevator.DoorOpenAmount < 0.5f)
@@ -529,10 +549,12 @@ namespace ElevatorsProbe
             var path = new NavMeshPath();
             bool canPath = NavMesh.CalculatePath(monster.Enemy.transform.position, ground, NavMesh.AllAreas, path) && path.status == NavMeshPathStatus.PathComplete;
             log.LogInfo($"[Probe] {name} MONSTER PATH {monster.enemyName} landing->car: {(canPath ? "ok" : "FAIL")} status={path.status} from={monster.Enemy.transform.position}");
+            // It sees us standing in the open car and comes for us, the way it happens in play.
+            monster.Enemy.SetChaseTarget(me);
             monster.Enemy.StateInvestigate.Set(ground, false);
             float best = 99f, t = 0f;
             bool inside = false;
-            while (t < 15f && !inside)
+            while (t < 25f && !inside)
             {
                 yield return new WaitForSecondsRealtime(0.5f);
                 t += 0.5f;
@@ -542,8 +564,13 @@ namespace ElevatorsProbe
                 best = Mathf.Min(best, Vector3.Distance(at, ground));
                 inside = Elevator.IsInside(at);
                 if (t % 4f < 0.5f)
+                {
+                    monster.Enemy.SetChaseTarget(me);
                     monster.Enemy.StateInvestigate.Set(ground, false);
+                    ElevatorsNet.SendDoors(14f);
+                }
             }
+            log.LogInfo($"[Probe] {name} WALK IN chase: {monster?.enemyName} state={monster?.Enemy?.CurrentState} chase={monster?.Enemy?.CheckChase()}");
             log.LogInfo($"[Probe] {name} MONSTER WALKS IN {(inside ? "ok" : "FAIL")}: {monster?.enemyName} closest {best:0.0} m after {t:0}s at {monster?.Enemy?.transform.position}");
             ElevatorsNet.SendDoors(0f);
             if (inside && monster != null)
@@ -580,10 +607,10 @@ namespace ElevatorsProbe
                 while (Elevator.Moving && w < 30f) { yield return new WaitForSecondsRealtime(0.5f); w += 0.5f; }
                 yield return new WaitForSecondsRealtime(2f);
             }
-            monster.Enemy.EnemyTeleported(upLanding);
-            yield return new WaitForSecondsRealtime(1f);
-            float busy = 0f;
-            while (Elevator.Patrolling && busy < 60f) { yield return new WaitForSecondsRealtime(1f); busy += 1f; }
+            yield return HoldPatrols();
+            yield return PutMonster(name, monster, upLanding, "PATROL setup");
+            log.LogInfo($"[Probe] {name} PATROL start: {monster.enemyName} at {monster.Enemy.transform.position} (upstairs landing {upLanding}), car at dock {Elevator.CurrentDock}");
+            Elevator.LastPatrolRider = null;
             Elevator.StartPatrol(monster, upDock, groundDock);
             float pt = 0f;
             bool done = false;
@@ -593,10 +620,266 @@ namespace ElevatorsProbe
                 pt += 1f;
                 if (monster == null || monster.Enemy == null)
                     break;
-                done = Elevator.CurrentDock == groundDock && !Elevator.Moving && Vector3.Distance(monster.Enemy.transform.position, groundLanding) < 5f;
+                done = Elevator.LastPatrolRider == monster && Elevator.CurrentDock == groundDock && !Elevator.Moving && Vector3.Distance(monster.Enemy.transform.position, groundLanding) < 5f;
             }
             log.LogInfo($"[Probe] {name} MONSTER PATROL {(done ? "ok" : "FAIL")}: after {pt:0}s car at dock {Elevator.CurrentDock} moving={Elevator.Moving}, {monster?.enemyName} at {monster?.Enemy?.transform.position}, ground landing {groundLanding}");
             yield return new WaitForSecondsRealtime(1f);
+            yield return ComesForYou(name, me, ground, up, groundDock, upDock, monster);
+            PluginConfig.MonsterPatrolInterval.Value = patrolInterval;
+        }
+
+        // End to end, nothing staged: we stand upstairs far from the shaft, a monster is downstairs,
+        // and the mod's own patrols have to bring one up and let it find us. Then the chase: one
+        // that saw us as the doors shut has to turn up on our floor and reach us.
+        private IEnumerator ComesForYou(string name, PlayerAvatar me, Vector3 ground, Vector3 up, int groundDock, int upDock, EnemyParent monster)
+        {
+            yield return HoldPatrols();
+            Vector3 hide = FarReachable(Elevator.LandingOf("upstairs"), up.y, 10f);
+            Place(me, hide + Vector3.up * 0.3f);
+            if (Elevator.CurrentDock != groundDock)
+            {
+                ElevatorsNet.RequestRide(groundDock);
+                float w = 0f;
+                yield return new WaitForSecondsRealtime(1.5f);
+                while (Elevator.Moving && w < 30f) { yield return new WaitForSecondsRealtime(0.5f); w += 0.5f; }
+                yield return new WaitForSecondsRealtime(2f);
+            }
+            var already = new HashSet<EnemyParent>();
+            foreach (EnemyParent p in EnemyDirector.instance.enemiesSpawned)
+                if (p != null && p.Spawned && p.Enemy != null && Mathf.Abs(p.Enemy.transform.position.y - up.y) < 4f) already.Add(p);
+            Vector3 start = FarPoint(ground, ground.y, 8f, 20f);
+            yield return PutMonster(name, monster, start, "COMES UP setup");
+            PluginConfig.MonsterPatrolInterval.Value = 12f;
+            log.LogInfo($"[Probe] {name} COMES UP: we hide at {hide}, {monster.enemyName} set down at {start}, {already.Count} monster(s) already upstairs, patrol every {PluginConfig.MonsterPatrolInterval.Value / Mathf.Max(1, Elevator.DockList().Count - 1):0}s");
+            EnemyParent? comer = null;
+            float t = 0f;
+            while (t < 180f && comer == null)
+            {
+                yield return new WaitForSecondsRealtime(1f);
+                t += 1f;
+                // Only a monster the car itself delivered counts: the game respawns monsters
+                // wherever it likes, and one popping up on our floor by respawn proves nothing.
+                foreach (EnemyParent p in EnemyDirector.instance.enemiesSpawned)
+                {
+                    if (p == null || !p.Spawned || p.Enemy == null || already.Contains(p) || !Elevator.Arrivals.Contains(p))
+                        continue;
+                    if (Mathf.Abs(p.Enemy.transform.position.y - up.y) < 4f) { comer = p; break; }
+                }
+            }
+            log.LogInfo($"[Probe] {name} MONSTER COMES UP {(comer != null ? "ok" : "FAIL")}: {(comer != null ? $"{comer.enemyName} rode up to our floor on its own after {t:0}s, now at {comer.Enemy.transform.position}" : $"nobody rode up in {t:0}s")}");
+            if (comer != null)
+                yield return ReachesYou(name, me, comer, "after the patrol");
+            yield return HoldPatrols();
+
+            // The chase. In the car at the ground with the doors open, it sees us, we ride.
+            if (monster == null || monster.Enemy == null || monster.Enemy.Vision == null || me.photonView == null)
+                yield break;
+            Place(me, ground + Vector3.up * 0.6f);
+            if (Elevator.CurrentDock != groundDock)
+            {
+                ElevatorsNet.RequestRide(groundDock);
+                float w = 0f;
+                yield return new WaitForSecondsRealtime(1.5f);
+                while (Elevator.Moving && w < 30f) { yield return new WaitForSecondsRealtime(0.5f); w += 0.5f; }
+                yield return new WaitForSecondsRealtime(2f);
+            }
+            ElevatorsNet.SendDoors(6f);
+            yield return PutMonster(name, monster, Elevator.LandingOf("ground"), "CHASE setup");
+            bool downstairs = monster.Enemy != null && Mathf.Abs(monster.Enemy.transform.position.y - ground.y) < 4f;
+            monster.Enemy.SetChaseTarget(me);
+            yield return new WaitForSecondsRealtime(2f);
+            log.LogInfo($"[Probe] {name} CHASE: {monster.enemyName} state={monster.Enemy.CurrentState} chase={monster.Enemy.CheckChase()} at {monster.Enemy.transform.position}");
+            ElevatorsNet.SendDoors(0f);
+            yield return new WaitForSecondsRealtime(2.5f);
+            // Every kind chases in its own way; what counts here is that it is chasing as the car
+            // leaves, which the game marks with its chase timer, held on frame by frame.
+            // We have to be in the car when it leaves, or nothing was chasing a rider.
+            if (!Elevator.IsInside(me.transform.position))
+            {
+                Place(me, ground + Vector3.up * 0.6f);
+                yield return new WaitForSecondsRealtime(1f);
+            }
+            log.LogInfo($"[Probe] {name} CHASE depart: us inside={Elevator.IsInside(me.transform.position)} at {me.transform.position}, {monster.enemyName} {Vector3.Distance(monster.Enemy.transform.position, ground):0.0} m from the car, doors {Elevator.DoorState()}");
+            float r = 0f;
+            bool sent = false;
+            for (float hold = 0f; hold < 2.5f; hold += Time.unscaledDeltaTime)
+            {
+                if (monster.Enemy != null) monster.Enemy.SetChaseTimer();
+                if (!sent && hold > 0.5f) { ElevatorsNet.RequestRide(upDock); sent = true; }
+                yield return null;
+            }
+            while (Elevator.Moving && r < 30f) { yield return new WaitForSecondsRealtime(0.5f); r += 0.5f; }
+            Place(me, hide + Vector3.up * 0.3f);
+            float f = 0f;
+            bool followed = false;
+            while (f < 30f && !followed)
+            {
+                yield return new WaitForSecondsRealtime(1f);
+                f += 1f;
+                followed = monster.Enemy != null && Mathf.Abs(monster.Enemy.transform.position.y - up.y) < 4f;
+            }
+            log.LogInfo($"[Probe] {name} MONSTER FOLLOWS {(!downstairs ? "n/a (it was not downstairs at the start)" : followed ? "ok" : "FAIL")}: {monster.enemyName} {(followed ? $"on our floor {f:0}s after the doors shut" : $"still at {monster.Enemy?.transform.position} after {f:0}s")}");
+            if (followed)
+                yield return ReachesYou(name, me, monster, "after the chase");
+        }
+
+        // Spawn one of the game's chasers through the level's own spawn call and wait for it to
+        // stand up; the director puts a fresh one at a first spawn point, so it is fetched after.
+        private IEnumerator Summon(string name, Vector3 at, System.Action<EnemyParent?> got)
+        {
+            string[] want = { "Rugrat", "Robe", "Huntsman", "Reaper", "Upscream", "Gnome", "Animal" };
+            EnemySetup? pick = null;
+            int bestRank = int.MaxValue;
+            EnemyDirector director = EnemyDirector.instance;
+            if (director == null || LevelGenerator.Instance == null) { got(null); yield break; }
+            foreach (List<EnemySetup> list in new[] { director.enemiesDifficulty1, director.enemiesDifficulty2, director.enemiesDifficulty3 })
+            {
+                if (list == null) continue;
+                foreach (EnemySetup setup in list)
+                {
+                    if (setup == null || setup.spawnObjects == null || setup.spawnObjects.Count == 0) continue;
+                    string n = setup.spawnObjects[0].Prefab != null ? setup.spawnObjects[0].Prefab.name : setup.spawnObjects[0].ResourcePath ?? "";
+                    int rank = System.Array.FindIndex(want, w => n.Contains(w));
+                    if (rank >= 0 && rank < bestRank) { bestRank = rank; pick = setup; }
+                }
+            }
+            if (pick == null)
+            {
+                log.LogInfo($"[Probe] {name} SUMMON: no known chaser in the director's lists");
+                got(null);
+                yield break;
+            }
+            var before = new HashSet<EnemyParent>(Object.FindObjectsOfType<EnemyParent>());
+            LevelGenerator.Instance.EnemySpawn(pick, at);
+            EnemyParent? fresh = null;
+            float t = 0f;
+            while (t < 20f && fresh == null)
+            {
+                yield return new WaitForSecondsRealtime(1f);
+                t += 1f;
+                foreach (EnemyParent p in Object.FindObjectsOfType<EnemyParent>())
+                    if (!before.Contains(p) && p.Spawned && p.Enemy != null) { fresh = p; break; }
+            }
+            if (fresh != null && !director.enemiesSpawned.Contains(fresh))
+                director.enemiesSpawned.Add(fresh);
+            // A fresh one can drop straight back into its despawn; it is kept up until it stays up.
+            float up = 0f;
+            while (fresh != null && up < 20f && (!fresh.Spawned || fresh.Enemy == null || fresh.Enemy.CurrentState == EnemyState.Despawn || fresh.Enemy.CurrentState == EnemyState.Spawn))
+            {
+                fresh.SpawnedTimerSet(600f);
+                fresh.SpawnedTimerPause(600f);
+                yield return new WaitForSecondsRealtime(1f);
+                up += 1f;
+            }
+            if (fresh != null) { fresh.SpawnedTimerSet(600f); fresh.SpawnedTimerPause(600f); }
+            log.LogInfo($"[Probe] {name} SUMMON {(fresh != null ? "ok" : "FAIL")}: {pick.name} -> {fresh?.enemyName} after {t:0}s, up after {up:0}s more, spawned={fresh?.Spawned} state={fresh?.Enemy?.CurrentState} at {fresh?.Enemy?.transform.position}");
+            got(fresh);
+        }
+
+        // A teleport that took: the mod's own patrols can move a monster under us, so each one is
+        // checked and repeated, and the monster is kept spawned for the whole test.
+        private IEnumerator PutMonster(string name, EnemyParent monster, Vector3 at, string what)
+        {
+            monster.SpawnedTimerSet(600f);
+            monster.SpawnedTimerPause(600f);
+            for (int i = 0; i < 3; i++)
+            {
+                float up = 0f;
+                while (up < 15f && (!monster.Spawned || monster.Enemy == null || monster.Enemy.CurrentState == EnemyState.Despawn || monster.Enemy.CurrentState == EnemyState.Spawn))
+                {
+                    monster.SpawnedTimerSet(600f);
+                    yield return new WaitForSecondsRealtime(1f);
+                    up += 1f;
+                }
+                if (monster.Enemy == null) break;
+                monster.Enemy.EnemyTeleported(at);
+                yield return new WaitForSecondsRealtime(1.5f);
+                if (monster.Enemy == null || Vector3.Distance(monster.Enemy.transform.position, at) < 3f)
+                    break;
+                log.LogInfo($"[Probe] {name} {what}: {monster.enemyName} did not stay at {at}, it is at {monster.Enemy.transform.position} (spawned={monster.Spawned}, state={monster.Enemy.CurrentState}), again");
+            }
+        }
+
+        // Nothing of the mod's own scheduling while a step is staged.
+        private IEnumerator HoldPatrols()
+        {
+            PluginConfig.MonsterPatrolInterval.Value = 0f;
+            float w = 0f;
+            while (Elevator.Patrolling && w < 60f) { yield return new WaitForSecondsRealtime(1f); w += 1f; }
+        }
+
+        // From wherever it stands on our floor, the game's own investigate has to bring it to us.
+        private IEnumerator ReachesYou(string name, PlayerAvatar me, EnemyParent comer, string when)
+        {
+            // Our floor has to be one navmesh from where it stands to where we are; the walk
+            // itself is the game's own AI and it takes its time, so the path is the verdict and
+            // the approach is reported alongside.
+            var path = new NavMeshPath();
+            bool from = NavMesh.SamplePosition(comer.Enemy.transform.position, out NavMeshHit a, 2f, NavMesh.AllAreas);
+            bool to = NavMesh.SamplePosition(me.transform.position, out NavMeshHit b, 2f, NavMesh.AllAreas);
+            bool complete = from && to && NavMesh.CalculatePath(a.position, b.position, NavMesh.AllAreas, path) && path.status == NavMeshPathStatus.PathComplete;
+            log.LogInfo($"[Probe] {name} MONSTER CAN REACH YOU {(complete ? "ok" : "FAIL")} {when}: {comer.enemyName} at {comer.Enemy.transform.position}, us at {me.transform.position}, path={path.status} corners={path.corners.Length}");
+            float t = 0f;
+            float best = 999f;
+            bool near = false;
+            while (t < 45f && !near)
+            {
+                if (t % 5f < 0.5f)
+                    EnemyDirector.instance.SetInvestigate(me.transform.position, 300f);
+                yield return new WaitForSecondsRealtime(1f);
+                t += 1f;
+                if (comer == null || comer.Enemy == null)
+                    break;
+                float d = Vector3.Distance(comer.Enemy.transform.position, me.transform.position);
+                best = Mathf.Min(best, d);
+                near = d < 6f;
+            }
+            log.LogInfo($"[Probe] {name} MONSTER APPROACH {when}: {comer?.enemyName} closest {best:0.0} m in {t:0}s{(near ? ", reached us" : ", the game's AI did not come over in that time")}");
+        }
+
+        // The farthest level point on the floor that the given spot can actually path to.
+        private static Vector3 FarReachable(Vector3 from, float floorY, float min)
+        {
+            Vector3 best = from;
+            float bestD = -1f;
+            var path = new NavMeshPath();
+            if (!NavMesh.SamplePosition(from, out NavMeshHit a, 2f, NavMesh.AllAreas))
+                return FarPoint(from, floorY, min);
+            foreach (LevelPoint point in Object.FindObjectsOfType<LevelPoint>())
+            {
+                Vector3 pp = point.transform.position;
+                if (Mathf.Abs(pp.y - floorY) > 2f)
+                    continue;
+                float d = Vector2.Distance(new Vector2(pp.x, pp.z), new Vector2(from.x, from.z));
+                if (d < min || d <= bestD)
+                    continue;
+                if (!NavMesh.SamplePosition(pp, out NavMeshHit b, 2f, NavMesh.AllAreas))
+                    continue;
+                if (NavMesh.CalculatePath(a.position, b.position, NavMesh.AllAreas, path) && path.status == NavMeshPathStatus.PathComplete)
+                {
+                    bestD = d;
+                    best = pp;
+                }
+            }
+            return best;
+        }
+
+        // A level point on the given floor, at least min metres (and at most max) from a spot.
+        private static Vector3 FarPoint(Vector3 from, float floorY, float min, float max = 9999f)
+        {
+            Vector3 best = from;
+            float bestD = -1f;
+            foreach (LevelPoint point in Object.FindObjectsOfType<LevelPoint>())
+            {
+                Vector3 pp = point.transform.position;
+                if (Mathf.Abs(pp.y - floorY) > 2f)
+                    continue;
+                float d = Vector2.Distance(new Vector2(pp.x, pp.z), new Vector2(from.x, from.z));
+                if (d < min || d > max)
+                    continue;
+                if (max < 9000f ? d < bestD || bestD < 0f : d > bestD) { bestD = d; best = pp; }
+            }
+            return best;
         }
 
         private IEnumerator RideTelemetry(string name, PlayerAvatar me, string what, ValuableObject? cargo = null)
@@ -675,6 +958,29 @@ namespace ElevatorsProbe
                     obstacles.Add($"{o.name}(enabled={o.enabled},carve={o.carving},size={o.size},{Vector3.Distance(o.transform.position, dpos):0.0}m)");
             }
             log.LogInfo($"[Probe] {name} NAV obstacles within 8 m of the dock: {(obstacles.Count > 0 ? string.Join("; ", obstacles) : "none")}");
+            // The floor under that line: a sill or a step at the doorway breaks the mesh as surely as a wall.
+            var profile = new System.Text.StringBuilder();
+            for (float z = 0f; z <= 3.0f; z += 0.3f)
+            {
+                Vector3 at = dpos + facing * new Vector3(0f, 1.5f, -z);
+                if (Physics.Raycast(at, Vector3.down, out RaycastHit fh, 3f, ~0, QueryTriggerInteraction.Ignore))
+                    profile.Append($" {z:0.0}:{fh.point.y - dpos.y:+0.00;-0.00}({fh.collider.name})");
+                else
+                    profile.Append($" {z:0.0}:none");
+            }
+            log.LogInfo($"[Probe] {name} NAV floor profile out through the doors (metres above the dock):{profile}");
+            var grid = new System.Text.StringBuilder();
+            for (float z = 0f; z <= 3.0f; z += 0.3f)
+            {
+                grid.Append($" z{z:0.0} ");
+                for (float x = -2.1f; x <= 2.1f; x += 0.3f)
+                {
+                    Vector3 at = dpos + facing * new Vector3(x, 0f, -z);
+                    grid.Append(NavMesh.SamplePosition(at, out _, 0.35f, NavMesh.AllAreas) ? '#' : '.');
+                }
+                grid.Append(" |");
+            }
+            log.LogInfo($"[Probe] {name} NAV grid (x -2.1..2.1 across, rows out of the car):{grid}");
             log.LogInfo($"[Probe] {name} NAV axis car->room {axis} (0.3 m steps from the car centre out through the doors); in the gaps: {(seen.Count > 0 ? string.Join(", ", seen) : "nothing solid")}");
         }
 

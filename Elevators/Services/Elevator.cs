@@ -49,6 +49,13 @@ namespace Elevators.Services
             public bool Attached;
 
             public float LastPress = -10f;
+            // One press per hold: the grab area fires its start event again while the beam
+            // stays on, and every re-fire was another click and another squash.
+            public bool Held;
+            public float HeldSince;
+            public Vector3 RestCap;
+            public bool RestKnown;
+            public bool Squashing;
 
             public void OnPhotonInstantiate(PhotonMessageInfo info)
             {
@@ -74,7 +81,10 @@ namespace Elevators.Services
                 if (area == null)
                     return;
                 foreach (PhysGrabObjectGrabArea.GrabArea grabArea in area.grabAreas)
+                {
                     grabArea.grabAreaEventOnStart.AddListener(() => PressedOnHost(this, area.GetLatestGrabber()));
+                    grabArea.grabAreaEventOnRelease.AddListener(() => Released(this));
+                }
             }
         }
 
@@ -390,6 +400,8 @@ namespace Elevators.Services
             LiftButton button = grab.GetComponent<LiftButton>();
             if (button == null || player == null || !player.isLocal)
                 return;
+            if (!TakeHold(button))
+                return;
             Plugin.LogInfo($"[Elevator] grabbed {button.Kind} (dock {button.Dock})");
             if (SemiFunc.IsMasterClientOrSingleplayer())
                 HandlePress(button, player.playerAvatar);
@@ -407,8 +419,39 @@ namespace Elevators.Services
         {
             if (button == null || !SemiFunc.IsMasterClientOrSingleplayer())
                 return;
+            if (!TakeHold(button))
+                return;
             Plugin.LogInfo($"[Elevator] grab area press {button.Kind} (dock {button.Dock})");
             HandlePress(button, grabber);
+        }
+
+        // The first take of a hold counts; the rest of the hold is ignored until it is let go.
+        // A hold nobody is on any more (the release was missed) times out on its own.
+        private static bool TakeHold(LiftButton button)
+        {
+            if (button.Held)
+            {
+                StaticGrabObject grab = button.GetComponent<StaticGrabObject>();
+                bool nobody = grab == null || (!grab.grabbed && grab.playerGrabbing.Count == 0);
+                if (!nobody || Time.time - button.HeldSince < 1f)
+                    return false;
+            }
+            button.Held = true;
+            button.HeldSince = Time.time;
+            return true;
+        }
+
+        public static void Released(LiftButton button)
+        {
+            if (button != null)
+                button.Held = false;
+        }
+
+        public static void Released(StaticGrabObject grab)
+        {
+            LiftButton button = grab != null ? grab.GetComponent<LiftButton>() : null;
+            if (button != null)
+                button.Held = false;
         }
 
         // The one press on the host, whether it came from the host's own grab or the grab area,
@@ -537,6 +580,24 @@ namespace Elevators.Services
 
         private static System.Collections.IEnumerator Squash(Transform plate)
         {
+            LiftButton button = plate.GetComponent<LiftButton>();
+            if (button != null && button.Squashing)
+                yield break;
+            if (button != null)
+                button.Squashing = true;
+            try
+            {
+                yield return SquashOnce(plate, button);
+            }
+            finally
+            {
+                if (button != null)
+                    button.Squashing = false;
+            }
+        }
+
+        private static System.Collections.IEnumerator SquashOnce(Transform plate, LiftButton? button)
+        {
             if (!shopButton)
             {
                 Vector3 rest = plate.localScale;
@@ -548,7 +609,12 @@ namespace Elevators.Services
             }
             // The shop button's cap travels down its own axis and springs back.
             Transform cap = plate.Find("Shop Button Visual") ?? plate;
-            Vector3 up = cap.localPosition;
+            if (button != null && !button.RestKnown)
+            {
+                button.RestCap = cap.localPosition;
+                button.RestKnown = true;
+            }
+            Vector3 up = button != null ? button.RestCap : cap.localPosition;
             Vector3 down = up - Vector3.up * 0.09f;
             float t = 0f;
             while (t < 1f && cap != null)
@@ -589,10 +655,16 @@ namespace Elevators.Services
             queued = -1;
             pursuers.Clear();
             lastRide.Clear();
+            monsterPresses.Clear();
             lostTicks.Clear();
             aboard.Clear();
             foreach (NavMeshObstacle block in dockBlocks)
                 if (block != null) Object.Destroy(block.gameObject);
+            foreach (NavMeshLink link in doorLinks)
+                if (link != null) Object.Destroy(link.gameObject);
+            doorLinks.Clear();
+            LastPatrolRider = null;
+            Arrivals.Clear();
             dockBlocks.Clear();
             hatch = null;
             hatchOpen = 0f;
@@ -1445,14 +1517,27 @@ namespace Elevators.Services
                 PlayerAvatar target = enemy.TargetPlayerAvatar;
                 bool onRider = target != null && !target.isDisabled && IsInside(target.transform.position);
                 bool chasing = enemy.CheckChase() || enemy.CurrentState == EnemyState.ChaseBegin || enemy.CurrentState == EnemyState.Chase;
-                if (!onRider || !chasing)
+                if (!chasing)
                     continue;
-                if (Vector3.Distance(enemy.transform.position, at) > PursuitRange)
+                // Most kinds keep their target to themselves; one in a chase right at the car as
+                // it leaves with someone inside was chasing that someone.
+                float reach = onRider ? PursuitRange : 12f;
+                if (Vector3.Distance(enemy.transform.position, at) > reach || (!onRider && !AnyoneInside()))
                     continue;
                 pursuers.Add(parent);
             }
             if (pursuers.Count > 0)
                 Plugin.LogInfo($"[Elevator] {pursuers.Count} monster(s) saw the car leave");
+        }
+
+        private static bool AnyoneInside()
+        {
+            foreach (PlayerAvatar player in SemiFunc.PlayerGetAll())
+            {
+                if (player != null && !player.isDisabled && IsInside(player.transform.position))
+                    return true;
+            }
+            return false;
         }
 
         private static void SendPursuers(Vector3 landing)
@@ -1644,6 +1729,8 @@ namespace Elevators.Services
                 yield break;
             rider.Enemy.EnemyTeleported(docks[to].Landing);
             lastRide[rider] = Time.time;
+            LastPatrolRider = rider;
+            Arrivals.Add(rider);
             EnemyDirector.instance?.SetInvestigate(docks[to].Landing, 12f);
             Plugin.LogInfo($"[Elevator] {rider.enemyName} stepped out at {docks[to].Name}");
         }
@@ -2143,6 +2230,10 @@ namespace Elevators.Services
         // carving obstacle closes each dock's patch while the car is elsewhere, so nothing paths
         // out over the open shaft.
         private static readonly List<NavMeshObstacle> dockBlocks = new List<NavMeshObstacle>();
+        private static readonly List<NavMeshLink> doorLinks = new List<NavMeshLink>();
+        internal static EnemyParent? LastPatrolRider;
+        // Every monster the car has ever delivered somewhere this level, for the probe.
+        internal static readonly HashSet<EnemyParent> Arrivals = new HashSet<EnemyParent>();
         private static readonly List<EnemyParent> aboard = new List<EnemyParent>();
 
         private static System.Collections.IEnumerator JoinNavMesh()
@@ -2246,8 +2337,26 @@ namespace Elevators.Services
                 ShutBox(dock.LandingL, dock.LandingOpen == 0f);
                 ShutBox(dock.LandingR, dock.LandingOpen == 0f);
             }
+            // Whatever the mouth's geometry does to the bake, a link spans the doorway from the
+            // room floor to the car floor; it only stands while both ends are on the mesh, so a
+            // dock the car has left (its patch carved) has no link into the shaft.
+            foreach (Dock dock in docks)
+            {
+                Quaternion facing = Quaternion.Euler(0f, dock.Yaw, 0f);
+                var bridge = new GameObject("Elevators doorway link");
+                bridge.transform.SetPositionAndRotation(dock.Position, facing);
+                var link = bridge.AddComponent<NavMeshLink>();
+                link.agentTypeID = surface.agentTypeID;
+                link.startPoint = new Vector3(0f, 0f, -2.7f);
+                link.endPoint = new Vector3(0f, 0f, -0.5f);
+                link.width = Mathf.Max(0.5f, cageHalfWidth * 2f - 0.8f);
+                link.bidirectional = true;
+                link.autoUpdate = true;
+                link.area = 0;
+                doorLinks.Add(link);
+            }
             bool onMesh = docks.Count > 0 && NavMesh.SamplePosition(docks[0].Position, out _, 0.6f, NavMesh.AllAreas);
-            Plugin.LogInfo($"[Elevator] car floor joined the navmesh at {docks.Count} docks, first dock on mesh: {onMesh}");
+            Plugin.LogInfo($"[Elevator] car floor joined the navmesh at {docks.Count} docks, first dock on mesh: {onMesh}, doorway links {doorLinks.Count}");
         }
 
         // Every dock's patch is closed except the one the car stands at.
@@ -2270,7 +2379,12 @@ namespace Elevators.Services
                 return;
             foreach (EnemyParent parent in EnemyDirector.instance.enemiesSpawned)
             {
-                if (parent != null && parent.Spawned && parent.Enemy != null && IsInside(parent.Enemy.transform.position))
+                if (parent == null || !parent.Spawned || parent.Enemy == null)
+                    continue;
+                // The agent and the body it drags can stand apart; either one in the car counts.
+                bool inside = IsInside(parent.Enemy.transform.position)
+                    || (parent.Enemy.HasRigidbody && parent.Enemy.Rigidbody != null && IsInside(parent.Enemy.Rigidbody.transform.position));
+                if (inside)
                     aboard.Add(parent);
             }
             if (aboard.Count > 0)
@@ -2286,6 +2400,7 @@ namespace Elevators.Services
                 if (parent == null || !parent.Spawned || parent.Enemy == null)
                     continue;
                 parent.Enemy.EnemyTeleported(docks[dock].Landing);
+                Arrivals.Add(parent);
                 Plugin.LogInfo($"[Elevator] {parent.enemyName} stepped out with the riders at {docks[dock].Name}");
             }
             aboard.Clear();
@@ -2315,6 +2430,7 @@ namespace Elevators.Services
         // would, so a car with its doors closed is no safe room. One press, then a breath.
         private static float doorsLook;
         private static float monsterPressed = -99f;
+        private static readonly Dictionary<EnemyParent, float> monsterPresses = new Dictionary<EnemyParent, float>();
 
         private static void MonstersAtTheDoors(float dt)
         {
@@ -2330,6 +2446,10 @@ namespace Elevators.Services
                 Vector3 at = parent.Enemy.transform.position;
                 if (Mathf.Abs(at.y - landing.y) > 3f || Vector3.Distance(at, landing) > 3.5f)
                     continue;
+                // One that loiters by the doors is not a doorman: half a minute between its presses.
+                if (monsterPresses.TryGetValue(parent, out float last) && Time.time - last < 30f)
+                    continue;
+                monsterPresses[parent] = Time.time;
                 monsterPressed = Time.time;
                 foreach (LiftButton b in Object.FindObjectsOfType<LiftButton>())
                 {
