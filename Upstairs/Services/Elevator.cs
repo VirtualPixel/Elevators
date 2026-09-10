@@ -759,7 +759,7 @@ namespace Upstairs.Services
             AddSlot(panel, new Vector3(0f, 0.28f, 0.02f), ButtonKind.Up, -1, "UP");
             AddSlot(panel, new Vector3(0f, -0.12f, 0.02f), ButtonKind.Down, -1, "DOWN");
             // The other wall holds the door button.
-            Transform other = Panel(body.transform, new Vector3(-(wallX - 0.02f), -0.5f, -0.6f), Quaternion.LookRotation(Vector3.right), 0.44f);
+            Transform other = Panel(body.transform, new Vector3(-(wallX - 0.02f), -0.75f, -0.6f), Quaternion.LookRotation(Vector3.right), 0.44f);
             AddSlot(other, new Vector3(0f, 0.08f, 0.02f), ButtonKind.Open, -1, "OPEN");
             var panelLight = new GameObject("panel light").AddComponent<Light>();
             panelLight.transform.SetParent(body.transform, false);
