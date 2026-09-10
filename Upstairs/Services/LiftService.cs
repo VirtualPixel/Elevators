@@ -302,17 +302,30 @@ namespace Upstairs.Services
             return title;
         }
 
-        internal int FloorIndexOfHeight(float y) => FloorIndexOfLayer(Mathf.FloorToInt((y + 0.1f) / 4f));
+
         internal int FloorLayer(int index) => Floors()[Mathf.Clamp(index, 0, Floors().Count - 1)].layer;
         internal string FloorName(int index) => Floors()[Mathf.Clamp(index, 0, Floors().Count - 1)].name;
 
-        internal int FloorIndexOfLayer(int layer)
+        // A map layer belongs to the floor whose pad is nearest the middle of that layer's four
+        // metres, measured in metres, so a room sitting a little below its floor is not handed
+        // to a sub floor by a rounding tie.
+        internal int FloorIndexOfLayer(int layer) => FloorIndexOfHeight(layer * 4f + 2f);
+
+        internal int FloorIndexOfHeight(float y)
         {
             List<(int layer, string name)> floors = Floors();
             int best = 0;
+            float bestGap = float.MaxValue;
             for (int i = 0; i < floors.Count; i++)
-                if (Mathf.Abs(floors[i].layer - layer) < Mathf.Abs(floors[best].layer - layer))
+            {
+                float padY = floors[i].layer * 4f;
+                float gap = Mathf.Abs(padY - y);
+                if (gap < bestGap)
+                {
+                    bestGap = gap;
                     best = i;
+                }
+            }
             return best;
         }
 

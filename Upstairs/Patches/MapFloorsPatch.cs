@@ -38,15 +38,15 @@ namespace Upstairs.Patches
                 ShowPlayer(__instance, true);
                 foreach (MapModule module in __instance.MapModules)
                 {
-                    if (module != null && !module.gameObject.activeSelf)
-                        module.gameObject.SetActive(true);
+                    if (module != null)
+                        Show(module.gameObject, true);
                 }
                 if (__instance.OverLayerParent != null)
                 {
                     foreach (Transform mark in __instance.OverLayerParent)
                     {
-                        if (!mark.gameObject.activeSelf && (mark.GetComponent<MapValuable>() != null || mark.GetComponent<MapCustomEntity>() != null))
-                            mark.gameObject.SetActive(true);
+                        if (mark.GetComponent<MapValuable>() != null || mark.GetComponent<MapCustomEntity>() != null)
+                            Show(mark.gameObject, true);
                     }
                 }
                 return;
@@ -95,13 +95,13 @@ namespace Upstairs.Patches
             }
             // Room markers and outlines hang off the module's own map object, wherever the game
             // parented it, so those follow the floor of the room they stand for.
+            // Renderers only: switching the objects off would kill a room's "discovered" animation
+            // or a marker's follow routine mid-way and leave a question mark for good.
             foreach (MapModule module in __instance.MapModules)
             {
                 if (module == null || module.module == null)
                     continue;
-                bool show = lift.FloorIndexOfHeight(module.module.transform.position.y) == viewing;
-                if (module.gameObject.activeSelf != show)
-                    module.gameObject.SetActive(show);
+                Show(module.gameObject, lift.FloorIndexOfHeight(module.module.transform.position.y) == viewing);
             }
             // Valuable dots and custom markers sit on the over layer at one height for the whole
             // level; each one follows the floor of the thing it marks.
@@ -118,9 +118,7 @@ namespace Upstairs.Patches
                         y = custom.Parent.position.y;
                     if (y == null)
                         continue;
-                    bool show = lift.FloorIndexOfHeight(y.Value) == viewing;
-                    if (mark.gameObject.activeSelf != show)
-                        mark.gameObject.SetActive(show);
+                    Show(mark.gameObject, lift.FloorIndexOfHeight(y.Value) == viewing);
                 }
             }
             bool onViewedFloor = playerFloor < 0 || playerFloor == viewing;
@@ -137,6 +135,15 @@ namespace Upstairs.Patches
                     label.ForceMeshUpdate();
                 }
                 ShowLabel(true);
+            }
+        }
+
+        private static void Show(GameObject go, bool show)
+        {
+            foreach (Renderer r in go.GetComponentsInChildren<Renderer>(true))
+            {
+                if (r.enabled != show)
+                    r.enabled = show;
             }
         }
 

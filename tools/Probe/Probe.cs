@@ -267,6 +267,36 @@ namespace UpstairsProbe
                     log.LogInfo($"[Probe] {name} map image {file}");
                 }
             }
+            // Discover a room on the player's floor while the map is open on another floor: the
+            // question mark must still clear.
+            if (lift.FloorCount >= 2 && PlayerAvatar.instance != null)
+            {
+                int mine = lift.FloorIndexOfHeight(PlayerAvatar.instance.transform.position.y);
+                Upstairs.Patches.MapFloorsPatch.Viewing = mine == 0 ? 1 : 0;
+                yield return new WaitForSecondsRealtime(0.3f);
+                RoomVolume? target = null;
+                foreach (RoomVolume rv in Object.FindObjectsOfType<RoomVolume>())
+                {
+                    if (rv.MapModule == null || rv.Module == null) continue;
+                    if (lift.FloorIndexOfHeight(rv.transform.position.y) != mine) continue;
+                    if (rv.Module.gameObject.name.StartsWith("Start")) continue;
+                    if (rv.MapModule.transform.localScale.x < 0.99f) continue;
+                    target = rv; break;
+                }
+                if (target != null)
+                {
+                    MapModule mm = target.MapModule;
+                    Vector3 spot = target.transform.position + Vector3.up * 0.3f;
+                    Place(PlayerAvatar.instance, spot);
+                    yield return new WaitForSecondsRealtime(2.5f);
+                    map.debugActive = false;
+                    yield return new WaitForSecondsRealtime(2.5f);
+                    bool cleared = mm == null || mm.transform.localScale.x < 0.05f;
+                    log.LogInfo($"[Probe] {name} DISCOVER {(cleared ? "ok" : "FAIL")} room {target.Module.name} map object {(mm == null ? "gone" : "scale " + mm.transform.localScale.x.ToString("0.00"))}");
+                }
+                else
+                    log.LogInfo($"[Probe] {name} DISCOVER n/a, no unexplored room on this floor");
+            }
             map.debugActive = false;
             yield return new WaitForSecondsRealtime(1f);
         }
