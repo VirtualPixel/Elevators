@@ -33,6 +33,11 @@ namespace Upstairs.Services
 
         private static PrefabRef? sitePrefab;
         private static Module.Type liftType;
+        // One of the ground's extraction rooms moves to a new floor: the ground spawn of it is
+        // swapped for a plain dead end, and a dead end up there becomes the extraction room.
+        private static bool moveExtraction;
+        private static int extractionsSeen;
+        private static int extractionsOnGround;
         private static int roomsFromTruck;
         private static bool? liftAxisVertical;
         private static bool[,]? groundGrid;
@@ -134,11 +139,69 @@ namespace Upstairs.Services
             roomsFromTruck = RoomsFromTruck(ground, width / 2, 0, LiftX, LiftY);
             Hint = Site?.Hint ?? FallbackHint();
             Active = true;
+            PlanExtraction(lg, rng);
             Plugin.LogInfo($"[Plan] {lg.Level.name}: ground {activeCells} cells, lift at ({LiftX},{LiftY}) {(Site != null ? Site.ModuleName : "plain room")}, up {UpPlan?.Cells.Count ?? 0}, down {DownPlan?.Cells.Count ?? 0}");
+        }
+
+        // With two or more extraction points, one goes upstairs or down: a dead-end cell on that
+        // floor takes an extraction room and the last ground extraction spawn becomes a plain
+        // dead end, so the count the round wants stays the game's own.
+        private static void PlanExtraction(LevelGenerator lg, System.Random rng)
+        {
+            moveExtraction = false;
+            extractionsSeen = 0;
+            extractionsOnGround = lg.ExtractionAmount;
+            if (!PluginConfig.ExtractionOnNewFloors.Value || extractionsOnGround < 2)
+                return;
+            // The upper floor first: a basement can still be dropped at build time when the level
+            // runs too deep, and it would take the point with it.
+            var floors = new List<FloorPlan>();
+            if (UpPlan != null) floors.Add(UpPlan);
+            if (DownPlan != null) floors.Add(DownPlan);
+            foreach (FloorPlan plan in floors)
+            {
+                var leaves = plan.Cells.FindAll(c => c.Kind == FloorPlan.Kind.DeadEnd && !(c.X == plan.LiftX && c.Y == plan.LiftY));
+                if (leaves.Count == 0)
+                    continue;
+                leaves[rng.Next(leaves.Count)].Extraction = true;
+                moveExtraction = true;
+                Plugin.LogInfo($"[Plan] one of {extractionsOnGround} extraction points goes {(plan == UpPlan ? "upstairs" : "to the basement")}");
+                return;
+            }
+        }
+
+        private static PrefabRef? PlainDeadEnd(LevelGenerator lg)
+        {
+            List<string> avoid = RoomFilter.Parse(PluginConfig.AvoidRooms.Value);
+            var options = new List<PrefabRef>();
+            foreach (List<PrefabRef> list in new[] { lg.Level.ModulesDeadEnd1, lg.Level.ModulesDeadEnd2, lg.Level.ModulesDeadEnd3 })
+            {
+                if (list == null) continue;
+                foreach (PrefabRef pr in list)
+                    if (pr != null && pr.IsValid() && !RoomFilter.Avoids(pr.PrefabName, avoid)) options.Add(pr);
+            }
+            return options.Count > 0 ? options[UnityEngine.Random.Range(0, options.Count)] : null;
         }
 
         public static void BeforeSpawn(int x, int y, Module.Type type)
         {
+            if (Active && moveExtraction && type == Module.Type.Extraction)
+            {
+                extractionsSeen++;
+                if (extractionsSeen == extractionsOnGround)
+                {
+                    PrefabRef? plain = PlainDeadEnd(LevelGenerator.Instance);
+                    if (plain != null)
+                    {
+                        Override = plain;
+                        Plugin.LogInfo($"[Plan] ground extraction at ({x},{y}) becomes {plain.PrefabName}, its point is on a new floor");
+                        return;
+                    }
+                    moveExtraction = false;
+                    foreach (FloorPlan? plan in new[] { UpPlan, DownPlan })
+                        plan?.Cells.ForEach(c => c.Extraction = false);
+                }
+            }
             if (!Active || sitePrefab == null || x != LiftX || y != LiftY)
                 return;
             if (type == liftType)

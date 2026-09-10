@@ -24,6 +24,8 @@ namespace Upstairs.Services
             public bool Bottom;
             public bool Right;
             public bool Left;
+            // A dead end that holds one of the level's extraction rooms instead of a plain room.
+            public bool Extraction;
 
             public int Connections => (Top ? 1 : 0) + (Bottom ? 1 : 0) + (Right ? 1 : 0) + (Left ? 1 : 0);
         }

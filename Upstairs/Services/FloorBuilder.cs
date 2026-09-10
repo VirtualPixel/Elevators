@@ -23,6 +23,7 @@ namespace Upstairs.Services
             Pool normal = MakePool(level.ModulesNormal1, level.ModulesNormal2, level.ModulesNormal3, avoid);
             Pool passage = MakePool(level.ModulesPassage1, level.ModulesPassage2, level.ModulesPassage3, avoid);
             Pool deadEnd = MakePool(level.ModulesDeadEnd1, level.ModulesDeadEnd2, level.ModulesDeadEnd3, avoid);
+            Pool extraction = MakePool(level.ModulesExtraction1, level.ModulesExtraction2, level.ModulesExtraction3, avoid);
             if (normal.L1.Count == 0)
             {
                 Plugin.LogAlways($"[Build] {level.name} has no normal rooms left after AvoidRooms, {floor.Name} skipped");
@@ -47,6 +48,7 @@ namespace Upstairs.Services
                 }
                 Pool pool = cell.Kind switch
                 {
+                    FloorPlan.Kind.DeadEnd when cell.Extraction && extraction.L1.Count > 0 => extraction,
                     FloorPlan.Kind.Passage when passage.L1.Count > 0 => passage,
                     FloorPlan.Kind.DeadEnd when deadEnd.L1.Count > 0 => deadEnd,
                     _ => normal

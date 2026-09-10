@@ -18,6 +18,7 @@ namespace Upstairs.Configuration
         public static ConfigEntry<int> ExtraLoot = null!;
         public static ConfigEntry<bool> EnemiesOnNewFloors = null!;
         public static ConfigEntry<float> MonsterPatrolInterval = null!;
+        public static ConfigEntry<bool> ExtractionOnNewFloors = null!;
         public static ConfigEntry<string> AvoidRooms = null!;
         public static ConfigEntry<float> LiftCooldown = null!;
         public static ConfigEntry<bool> VoidRescue = null!;
@@ -49,6 +50,9 @@ namespace Upstairs.Configuration
             MonsterPatrolInterval = config.Bind("Floors", "MonsterPatrolInterval", 90f, new ConfigDescription(
                 "Seconds between monsters taking the elevator on their own, for a building with one extra floor; two extra floors halves it. An idle one near a dock calls the car, boards as the doors shut, and steps out on another floor, four times in five one with someone on it, and then sits out a couple of intervals. You hear the whole trip through the doors. 0 turns patrols off. Needs EnemiesOnNewFloors.",
                 new AcceptableValueRange<float>(0f, 600f)));
+
+            ExtractionOnNewFloors = config.Bind("Floors", "ExtractionOnNewFloors", true,
+                "On a level with two or more extraction points, one of them stands on a new floor instead of the ground. The count stays the game's own.");
 
             AvoidRooms = config.Bind("Floors", "AvoidRooms", "Bottomless,Outside",
                 "Comma separated. A room whose name contains one of these is never picked for a new floor. " +

@@ -121,6 +121,15 @@ namespace UpstairsProbe
                 int monsters = Count(enemies, e => e.Enemy && (floor.Above ? e.Enemy.transform.position.y > Session.GroundTop : e.Enemy.transform.position.y < Session.GroundBottom));
                 log.LogInfo($"[Probe] {name} {floor.Name}: y={floor.Y:0} rooms planned={floor.Plan.Cells.Count} spawned={spawned} doors planned={floor.Plan.Doors.Count} spawned={spawnedDoors} loot={loot} points={pts} navVerts={navVerts} monsters={monsters} pick={floor.PickBottom:0}..{floor.PickTop:0}");
             }
+            ExtractionPoint[] points2 = Object.FindObjectsOfType<ExtractionPoint>();
+            int highPoints = Count(points2, e => e.transform.position.y > Session.GroundTop);
+            int lowPoints = Count(points2, e => e.transform.position.y < Session.GroundBottom);
+            log.LogInfo($"[Probe] {name} extraction points: {points2.Length} total, {highPoints} upstairs, {lowPoints} in the basement, round wants {(RoundDirector.instance != null ? RoundDirector.instance.extractionPoints : -1)}");
+            foreach (ExtractionPoint e in points2)
+            {
+                Module? m = e.GetComponentInParent<Module>();
+                log.LogInfo($"[Probe] {name} extraction point at {e.transform.position} in {(m != null ? m.name : e.transform.root.name)}");
+            }
             int groundLoot = Count(valuables, v => v.transform.position.y <= Session.GroundTop && v.transform.position.y >= Session.GroundBottom);
             log.LogInfo($"[Probe] {name} ground: modules={Count(modules, m => Mathf.Abs(m.transform.position.y) < 1f)} doors={Count(doors, d => Mathf.Abs(d.transform.position.y) < 1f)} loot={groundLoot} of {valuables.Length} pathPoints={lg.LevelPathPoints.Count} of {points.Length} monsters={enemies.Length}");
             log.LogInfo($"[Probe] {name} pads: {(LiftService.Instance != null ? LiftService.Instance.Describe() : "no lift service")} elevator={Elevator.Built} docks={Elevator.DockCount}");
@@ -464,6 +473,9 @@ namespace UpstairsProbe
             if (Probe.Forced == null)
                 return true;
             __instance.levelCurrent = Probe.Forced;
+            // Deep enough into a run for several extraction points and the bigger grid.
+            if (__instance.levelsCompleted < 4)
+                __instance.levelsCompleted = 4;
             return false;
         }
     }

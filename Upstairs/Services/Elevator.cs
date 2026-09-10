@@ -519,26 +519,6 @@ namespace Upstairs.Services
                 UpstairsNet.RequestRide(target);
         }
 
-        // The next dock up or down from a given one.
-        private static int NeighbourOf(int dock, bool above)
-        {
-            if (dock < 0 || dock >= docks.Count)
-                return -1;
-            float y = docks[dock].Position.y;
-            int best = -1;
-            float bestGap = float.MaxValue;
-            for (int i = 0; i < docks.Count; i++)
-            {
-                float gap = above ? docks[i].Position.y - y : y - docks[i].Position.y;
-                if (gap > 1f && gap < bestGap)
-                {
-                    bestGap = gap;
-                    best = i;
-                }
-            }
-            return best;
-        }
-
         private static System.Collections.IEnumerator Squash(Transform plate)
         {
             if (!shopButton)
@@ -940,15 +920,39 @@ namespace Upstairs.Services
         // A dark plate with round lit buttons and a word under each, the way an elevator panel reads.
         private static Transform Panel(Transform parent, Vector3 localPos, Quaternion localRot, float height)
         {
-            plateMaterial ??= new Material(Shader.Find("Sprites/Default")) { color = new Color(0.16f, 0.16f, 0.18f) };
-            var plate = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            plate.name = "Upstairs panel";
-            Object.Destroy(plate.GetComponent<Collider>());
-            plate.transform.SetParent(parent, false);
-            plate.transform.localPosition = localPos;
-            plate.transform.localRotation = localRot;
-            plate.transform.localScale = new Vector3(0.28f, height, 0.03f);
-            plate.GetComponent<Renderer>().sharedMaterial = plateMaterial;
+            // The Museum's own elevator wall plate, in its own brushed material, stretched to fit.
+            GameObject? plateAsset = FindAsset(ButtonMeshName);
+            MeshFilter? plateMesh = plateAsset != null ? plateAsset.GetComponent<MeshFilter>() : null;
+            GameObject plate;
+            if (plateMesh != null && plateMesh.sharedMesh != null)
+            {
+                plate = Object.Instantiate(plateAsset!, parent);
+                StripScripts(plate);
+                foreach (Collider c in plate.GetComponentsInChildren<Collider>(true))
+                    Object.Destroy(c);
+                Bounds b = plateMesh.sharedMesh.bounds;
+                // The plate faces -x where the Museum hangs it; here it faces the panel's +z.
+                var pivot = new GameObject("Upstairs panel").transform;
+                pivot.SetParent(parent, false);
+                pivot.localPosition = localPos;
+                pivot.localRotation = localRot;
+                plate.transform.SetParent(pivot, false);
+                plate.transform.localRotation = Quaternion.Euler(0f, 90f, 0f);
+                plate.transform.localScale = new Vector3(1f, height / Mathf.Max(0.01f, b.size.y), 0.28f / Mathf.Max(0.01f, b.size.z));
+                plate.transform.localPosition = Quaternion.Euler(0f, 90f, 0f) * new Vector3(-b.center.x, -b.center.y * plate.transform.localScale.y, -b.center.z * plate.transform.localScale.z);
+            }
+            else
+            {
+                plateMaterial ??= new Material(Shader.Find("Sprites/Default")) { color = new Color(0.16f, 0.16f, 0.18f) };
+                plate = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                plate.name = "Upstairs panel";
+                Object.Destroy(plate.GetComponent<Collider>());
+                plate.transform.SetParent(parent, false);
+                plate.transform.localPosition = localPos;
+                plate.transform.localRotation = localRot;
+                plate.transform.localScale = new Vector3(0.28f, height, 0.03f);
+                plate.GetComponent<Renderer>().sharedMaterial = plateMaterial;
+            }
             var holder = new GameObject("face").transform;
             holder.SetParent(parent, false);
             holder.localPosition = localPos;
@@ -1732,15 +1736,33 @@ namespace Upstairs.Services
             }
         }
 
+        // The next stop up or down. A shaft room's sub floor is a side stop: down from its own
+        // floor reaches it, up from it goes home, and it is skipped on the way past, so up from the
+        // ground is the upper floor and not the pit beneath it.
         private static int Neighbour(bool above)
         {
             if (car == null)
                 return -1;
-            float y = car.transform.parent.position.y - FloorOffset;
+            return NextStop(car.transform.parent.position.y - FloorOffset, atDock >= 0 && IsSub(atDock), above);
+        }
+
+        private static int NeighbourOf(int dock, bool above)
+        {
+            if (dock < 0 || dock >= docks.Count)
+                return -1;
+            return NextStop(docks[dock].Position.y, IsSub(dock), above);
+        }
+
+        private static bool IsSub(int dock) => dock >= 0 && dock < docks.Count && docks[dock].Name.EndsWith(" sub");
+
+        private static int NextStop(float y, bool fromSub, bool above)
+        {
             int best = -1;
             float bestGap = float.MaxValue;
             for (int i = 0; i < docks.Count; i++)
             {
+                if (IsSub(i) && (above || fromSub))
+                    continue;
                 float gap = above ? docks[i].Position.y - y : y - docks[i].Position.y;
                 if (gap > 1f && gap < bestGap)
                 {
