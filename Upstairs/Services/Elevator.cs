@@ -107,6 +107,9 @@ namespace Upstairs.Services
             public Vector3 Position;
             public float Yaw;
             public string Name = "";
+            // Somewhere on the floor by the doors that is definitely walkable.
+            public Vector3 Landing;
+            public Sound? Speaker;
             // Set when the dock sits inside a real elevator shaft: the room's own doors, reused as
             // landing doors that only open while the car is here.
             public Transform? LandingL;
@@ -139,6 +142,10 @@ namespace Upstairs.Services
         private static float landWait;
         private const float LandPause = 0.9f;
         private static Sound? landThud;
+        private static float openHold;
+        private const float OpenHoldTime = 4f;
+        // A press made mid-trip: the car carries on to that dock after it lands, doors shut.
+        private static int queued = -1;
         private static Vector3 lastCarPos;
         private static bool localRiding;
         private static AudioSource? hum;
@@ -381,8 +388,9 @@ namespace Upstairs.Services
             if (button == null || player == null || !player.isLocal)
                 return;
             Plugin.LogInfo($"[Elevator] grabbed {button.Kind} (dock {button.Dock})");
-            Press(button);
-            Ride(button);
+            // The host's grab area is the press that counts; this is only the instant feedback.
+            if (!SemiFunc.IsMasterClientOrSingleplayer())
+                Press(button);
         }
 
         // The host's grab area saw a beam take hold: the press that counts, plus the click for
@@ -394,47 +402,75 @@ namespace Upstairs.Services
             int grabberView = grabber != null && grabber.photonView != null ? grabber.photonView.ViewID : -1;
             Plugin.LogInfo($"[Elevator] grab area press {button.Kind} (dock {button.Dock})");
             // Offline the buttons carry no network id, so the host presses its own copy here and
-            // only the other clients are told which one.
-            Press(button);
+            // only the other clients are told which one, and whether it was refused.
+            bool denied = !Ride(button);
+            Press(button, denied);
             if (SemiFunc.IsMultiplayer())
-                UpstairsNet.SendPress(button.GetComponent<PhotonView>()?.ViewID ?? -1, grabberView);
-            Ride(button);
+                UpstairsNet.SendPress(button.GetComponent<PhotonView>()?.ViewID ?? -1, grabberView, denied);
         }
 
         // Everyone: the click and the squash. The presser's own client already played it on the
         // grab, and the short dedupe in Press keeps that from doubling.
-        public static void PlayPress(int buttonView, int grabberView)
+        public static void PlayPress(int buttonView, int grabberView, bool denied)
         {
             PhotonView view = PhotonView.Find(buttonView);
             LiftButton button = view != null ? view.GetComponent<LiftButton>() : null;
             if (button == null)
                 return;
-            Press(button);
+            Press(button, denied);
         }
 
         private static Sound? standPress;
+        private static Sound? standDeny;
         private static bool standPressLooked;
 
-        private static void Press(LiftButton button)
+        private static void Press(LiftButton button, bool denied = false)
         {
             if (Time.time - button.LastPress < 0.3f)
                 return;
             button.LastPress = Time.time;
-            Play(sounds?.soundButton, button.transform.position);
-            // The upgrade stand's press has the weight the extraction click lacks.
+            // The upgrade stand's press has the weight the extraction click lacks, and its
+            // refusal is the game's own "no".
             if (!standPressLooked)
             {
                 standPressLooked = true;
                 GameObject? stands = Resources.Load<GameObject>("level/shop/modules/Module - Shop - N - Corner Stands");
                 UpgradeStand? stand = stands != null ? stands.GetComponentInChildren<UpgradeStand>(true) : null;
                 standPress = stand != null ? stand.soundButtonPress : null;
+                standDeny = stand != null ? stand.soundButtonDeny : null;
             }
+            if (denied)
+            {
+                Play(standDeny ?? sounds?.soundButton, button.transform.position);
+                Plugin.Instance.StartCoroutine(Squash(button.transform));
+                return;
+            }
+            Play(sounds?.soundButton, button.transform.position);
             Play(standPress, button.transform.position);
             Plugin.Instance.StartCoroutine(Squash(button.transform));
         }
 
-        private static void Ride(LiftButton button)
+        // What a press does, on the host. Call at the dock the car stands on opens the doors. A
+        // press mid-trip queues the next dock that way, so two presses of up is two floors up.
+        // Anything the car cannot do, the top floor's up, is refused.
+        private static bool Ride(LiftButton button)
         {
+            if (car == null)
+                return false;
+            if (Moving)
+            {
+                int next = button.Kind switch
+                {
+                    ButtonKind.Call => button.Dock,
+                    ButtonKind.Up => NeighbourOf(queued >= 0 ? queued : toDock, above: true),
+                    ButtonKind.Down => NeighbourOf(queued >= 0 ? queued : toDock, above: false),
+                    _ => -1
+                };
+                if (next < 0 || next == toDock)
+                    return false;
+                queued = next;
+                return true;
+            }
             int target = button.Kind switch
             {
                 ButtonKind.Call => button.Dock,
@@ -442,8 +478,39 @@ namespace Upstairs.Services
                 ButtonKind.Down => Neighbour(above: false),
                 _ => -1
             };
-            if (target >= 0)
-                UpstairsNet.RequestRide(target);
+            if (target < 0)
+                return false;
+            if (target == atDock)
+            {
+                if (button.Kind != ButtonKind.Call)
+                    return false;
+                openHold = OpenHoldTime;
+                return true;
+            }
+            if (SemiFunc.IsMasterClientOrSingleplayer())
+                return TryDepart(target);
+            UpstairsNet.RequestRide(target);
+            return true;
+        }
+
+        // The next dock up or down from a given one.
+        private static int NeighbourOf(int dock, bool above)
+        {
+            if (dock < 0 || dock >= docks.Count)
+                return -1;
+            float y = docks[dock].Position.y;
+            int best = -1;
+            float bestGap = float.MaxValue;
+            for (int i = 0; i < docks.Count; i++)
+            {
+                float gap = above ? docks[i].Position.y - y : y - docks[i].Position.y;
+                if (gap > 1f && gap < bestGap)
+                {
+                    bestGap = gap;
+                    best = i;
+                }
+            }
+            return best;
         }
 
         private static System.Collections.IEnumerator Squash(Transform plate)
@@ -496,6 +563,9 @@ namespace Upstairs.Services
             hum = null;
             humLoop = null;
             landWait = 0f;
+            openHold = 0f;
+            queued = -1;
+            pursuers.Clear();
             hatch = null;
             hatchOpen = 0f;
             hatchWantOpen = false;
@@ -507,7 +577,7 @@ namespace Upstairs.Services
             sounds = null;
         }
 
-        public static void Build(IReadOnlyList<(Vector3 pad, float yaw, string name)> pads)
+        public static void Build(IReadOnlyList<(Vector3 pad, float yaw, string name, Vector3 landing)> pads)
         {
             Clear();
             if (pads.Count < 2)
@@ -520,8 +590,8 @@ namespace Upstairs.Services
             }
             sounds = Object.FindObjectOfType<ExtractionPoint>();
             Plugin.LogInfo($"[Elevator] one-shot sounds {(sounds != null ? "from the extraction point" : "MISSING, no extraction point found")}");
-            foreach ((Vector3 pad, float yaw, string name) in pads)
-                docks.Add(new Dock { Position = pad, Yaw = yaw, Name = name });
+            foreach ((Vector3 pad, float yaw, string name, Vector3 landing) in pads)
+                docks.Add(new Dock { Position = pad, Yaw = yaw, Name = name, Landing = landing });
 
             int ground = docks.FindIndex(d => d.Name == "ground");
             if (ground < 0)
@@ -539,9 +609,12 @@ namespace Upstairs.Services
                 Plugin.LogInfo($"[Elevator] under the {docks[i].Name} dock: {under}");
             }
             BuildShaft();
+            BuildSpeakers();
             foreach (LiftButton waiting in loose.ToArray())
                 Attach(waiting);
             SpawnButtons();
+            if (SemiFunc.IsMasterClientOrSingleplayer())
+                Plugin.Instance.StartCoroutine(Patrols());
             Plugin.LogInfo($"[Elevator] car at {docks[ground].Name}, {docks.Count} docks");
         }
 
@@ -963,6 +1036,55 @@ namespace Upstairs.Services
                 Object.DestroyImmediate(rb);
         }
 
+        // The shaft carries sound. A speaker by every dock's doors plays the motor while the car
+        // moves, so a player on any floor hears it coming, going, and stopping.
+        private static void BuildSpeakers()
+        {
+            if (hum == null || hum.clip == null)
+                return;
+            foreach (Dock dock in docks)
+            {
+                var go = new GameObject("Upstairs shaft speaker");
+                go.transform.position = dock.Position + Vector3.up * 1.6f + Quaternion.Euler(0f, dock.Yaw, 0f) * new Vector3(0f, 0f, -0.6f);
+                var src = go.AddComponent<AudioSource>();
+                src.clip = hum.clip;
+                src.loop = true;
+                src.playOnAwake = false;
+                src.spatialBlend = 1f;
+                src.rolloffMode = hum.rolloffMode;
+                src.minDistance = 2f;
+                src.maxDistance = 14f;
+                src.volume = 0f;
+                src.outputAudioMixerGroup = hum.outputAudioMixerGroup;
+                dock.Speaker = new Sound
+                {
+                    Sounds = new[] { hum.clip },
+                    Source = src,
+                    Volume = 0.3f,
+                    VolumeRandom = 0f,
+                    Pitch = 0.9f,
+                    PitchRandom = 0f,
+                    SpatialBlend = 1f,
+                    Doppler = 0f,
+                    ReverbMix = 1f,
+                    FalloffMultiplier = 1f
+                };
+            }
+        }
+
+        // The depart and landing sounds, heard through every landing's doors, quieter.
+        private static void PlayAtDocks(Sound? sound, Vector3 except, float volume)
+        {
+            if (sound == null)
+                return;
+            foreach (Dock dock in docks)
+            {
+                if (Vector3.Distance(dock.Position, except) < 2f)
+                    continue;
+                sound.Play(dock.Position + Vector3.up * 1.5f, volume);
+            }
+        }
+
         private static AudioClip? motorClip;
 
         // The move loop of the Arctic level's doors, read off the first hinge that uses it in any
@@ -1038,8 +1160,204 @@ namespace Upstairs.Services
         {
             if (car == null || Moving || dock < 0 || dock >= docks.Count || dock == atDock)
                 return false;
+            NotePursuers();
             UpstairsNet.SendRide(atDock, dock);
             return true;
+        }
+
+        // Monsters that had a rider in their sights when the car left. The ride is no escape
+        // from them: a while after the car lands they turn up on that floor, out of sight, and
+        // come looking, the way the game already moves a monster that has lost you.
+        private static readonly List<EnemyParent> pursuers = new List<EnemyParent>();
+        private const float PursuitRange = 30f;
+
+        private static void NotePursuers()
+        {
+            if (Moving)
+                return;
+            pursuers.Clear();
+            if (!PluginConfig.EnemiesOnNewFloors.Value || car == null || EnemyDirector.instance == null)
+                return;
+            Vector3 at = car.transform.parent.position;
+            foreach (EnemyParent parent in EnemyDirector.instance.enemiesSpawned)
+            {
+                if (parent == null || !parent.Spawned || parent.Enemy == null)
+                    continue;
+                Enemy enemy = parent.Enemy;
+                PlayerAvatar target = enemy.TargetPlayerAvatar;
+                bool onRider = target != null && !target.isDisabled && IsInside(target.transform.position);
+                bool chasing = enemy.CheckChase() || enemy.CurrentState == EnemyState.ChaseBegin || enemy.CurrentState == EnemyState.Chase;
+                if (!onRider || !chasing)
+                    continue;
+                if (Vector3.Distance(enemy.transform.position, at) > PursuitRange)
+                    continue;
+                pursuers.Add(parent);
+            }
+            if (pursuers.Count > 0)
+                Plugin.LogInfo($"[Elevator] {pursuers.Count} monster(s) saw the car leave");
+        }
+
+        private static void SendPursuers(Vector3 landing)
+        {
+            if (pursuers.Count == 0 || !SemiFunc.IsMasterClientOrSingleplayer())
+                return;
+            foreach (EnemyParent parent in pursuers)
+            {
+                // The Shadow Child teleports on its own; it is simply there sooner.
+                bool blinks = parent.Enemy != null && parent.Enemy.GetComponentInChildren<EnemyThinMan>(true) != null;
+                Plugin.Instance.StartCoroutine(Pursue(parent, landing, blinks ? Random.Range(2f, 5f) : Random.Range(6f, 14f)));
+            }
+            pursuers.Clear();
+        }
+
+        // Every so often an idle monster near a dock takes the elevator to another floor: it
+        // walks up as the car is called, stands at the doors as they shut, and steps out where
+        // the car lands. The shaft carries every sound of it. The Shadow Child never bothers.
+        private static System.Collections.IEnumerator Patrols()
+        {
+            while (car != null)
+            {
+                float interval = PluginConfig.MonsterPatrolInterval.Value;
+                yield return new WaitForSeconds(interval > 0f ? interval * Random.Range(0.7f, 1.3f) : 30f);
+                if (car == null)
+                    yield break;
+                if (interval <= 0f || !PluginConfig.EnemiesOnNewFloors.Value || Moving || EnemyDirector.instance == null)
+                    continue;
+                if (!PickPatrol(out EnemyParent? rider, out int from, out int to) || rider == null)
+                    continue;
+                yield return Patrol(rider, from, to);
+            }
+        }
+
+        private static bool PickPatrol(out EnemyParent? rider, out int from, out int to)
+        {
+            rider = null;
+            from = -1;
+            to = -1;
+            var candidates = new List<(EnemyParent parent, int dock)>();
+            foreach (EnemyParent parent in EnemyDirector.instance.enemiesSpawned)
+            {
+                if (parent == null || !parent.Spawned || parent.Enemy == null)
+                    continue;
+                Enemy enemy = parent.Enemy;
+                if (enemy.CheckChase() || enemy.GetComponentInChildren<EnemyThinMan>(true) != null)
+                    continue;
+                if (PlayerWithin(enemy.transform.position, 14f))
+                    continue;
+                int dock = NearestDock(enemy.transform.position, 25f);
+                if (dock >= 0)
+                    candidates.Add((parent, dock));
+            }
+            if (candidates.Count == 0)
+                return false;
+            (rider, from) = candidates[Random.Range(0, candidates.Count)];
+            // Somewhere else, leaning toward a floor with someone on it.
+            var elsewhere = new List<int>();
+            var withPlayers = new List<int>();
+            for (int i = 0; i < docks.Count; i++)
+            {
+                if (Mathf.Abs(docks[i].Position.y - docks[from].Position.y) < 6f)
+                    continue;
+                elsewhere.Add(i);
+                if (PlayerWithin(docks[i].Position, 60f, sameFloor: true))
+                    withPlayers.Add(i);
+            }
+            if (elsewhere.Count == 0)
+                return false;
+            List<int> pool = withPlayers.Count > 0 && Random.value < 0.6f ? withPlayers : elsewhere;
+            to = pool[Random.Range(0, pool.Count)];
+            return true;
+        }
+
+        private static System.Collections.IEnumerator Patrol(EnemyParent rider, int from, int to)
+        {
+            Plugin.LogInfo($"[Elevator] {rider.enemyName} takes the elevator {docks[from].Name} -> {docks[to].Name}");
+            EnemyDirector.instance?.SetInvestigate(docks[from].Landing, 6f);
+            if (atDock != from)
+            {
+                if (!TryDepart(from))
+                    yield break;
+                float t = 0f;
+                while ((Moving || atDock != from) && t < 40f) { t += 0.5f; yield return new WaitForSeconds(0.5f); }
+                if (atDock != from || Moving)
+                    yield break;
+            }
+            yield return new WaitForSeconds(2.5f);
+            if (rider == null || !rider.Spawned || rider.Enemy == null || Moving || atDock != from)
+                yield break;
+            if (rider.Enemy.CheckChase() || LocalInside() || PlayerWithin(car!.transform.parent.position, 3f))
+                yield break;
+            // At the doors as they shut.
+            if (Vector3.Distance(rider.Enemy.transform.position, docks[from].Landing) > 4f)
+                rider.Enemy.EnemyTeleported(docks[from].Landing);
+            if (!TryDepart(to))
+                yield break;
+            float w = 0f;
+            while ((Moving || atDock != to) && w < 40f) { w += 0.5f; yield return new WaitForSeconds(0.5f); }
+            if (rider == null || !rider.Spawned || rider.Enemy == null || atDock != to)
+                yield break;
+            rider.Enemy.EnemyTeleported(docks[to].Landing);
+            EnemyDirector.instance?.SetInvestigate(docks[to].Landing, 12f);
+            Plugin.LogInfo($"[Elevator] {rider.enemyName} stepped out at {docks[to].Name}");
+        }
+
+        private static bool PlayerWithin(Vector3 at, float range, bool sameFloor = false)
+        {
+            foreach (PlayerAvatar player in SemiFunc.PlayerGetAll())
+            {
+                if (player == null || player.isDisabled)
+                    continue;
+                Vector3 p = player.transform.position;
+                if (sameFloor && Mathf.Abs(p.y - at.y) > 6f)
+                    continue;
+                if (Vector3.Distance(p, at) < range)
+                    return true;
+            }
+            return false;
+        }
+
+        private static int NearestDock(Vector3 at, float maxFlat)
+        {
+            int best = -1;
+            float bestFlat = maxFlat;
+            for (int i = 0; i < docks.Count; i++)
+            {
+                if (Mathf.Abs(docks[i].Position.y - at.y) > 6f)
+                    continue;
+                float flat = Vector2.Distance(new Vector2(at.x, at.z), new Vector2(docks[i].Position.x, docks[i].Position.z));
+                if (flat < bestFlat)
+                {
+                    bestFlat = flat;
+                    best = i;
+                }
+            }
+            return best;
+        }
+
+        private static System.Collections.IEnumerator Pursue(EnemyParent parent, Vector3 landing, float delay)
+        {
+            yield return new WaitForSeconds(delay);
+            if (parent == null || !parent.Spawned || parent.Enemy == null || LevelGenerator.Instance == null)
+                yield break;
+            // A path point on the landing's floor, near enough to matter, far enough to arrive unseen.
+            var spots = new List<LevelPoint>();
+            foreach (LevelPoint point in LevelGenerator.Instance.LevelPathPoints)
+            {
+                if (point == null || (point.Room != null && point.Room.Truck))
+                    continue;
+                Vector3 p = point.transform.position;
+                if (Mathf.Abs(p.y - landing.y) > 6f)
+                    continue;
+                float flat = Vector2.Distance(new Vector2(p.x, p.z), new Vector2(landing.x, landing.z));
+                if (flat >= 10f && flat <= 30f)
+                    spots.Add(point);
+            }
+            if (spots.Count == 0)
+                yield break;
+            LevelPoint spot = spots[Random.Range(0, spots.Count)];
+            parent.Enemy.EnemyTeleported(spot.transform.position);
+            EnemyDirector.instance?.SetInvestigate(landing, 40f);
+            Plugin.LogInfo($"[Elevator] {parent.enemyName} followed the car");
         }
 
         // Every client: the trip as the host called it. The car is snapped to the start dock
@@ -1067,6 +1385,7 @@ namespace Upstairs.Services
             lastCarPos = root.position;
             localRiding = LocalInside();
             Play(sounds?.soundActivate1, root.position);
+            PlayAtDocks(sounds?.soundActivate1, root.position, 0.5f);
             EnemyDirector.instance?.SetInvestigate(root.position, 20f);
             Plugin.LogInfo($"[Elevator] {docks[from].Name} -> {docks[to].Name}, {travelLength:0} m, rider={localRiding}");
         }
@@ -1077,6 +1396,8 @@ namespace Upstairs.Services
             // through walls like every other loop it runs.
             if (humLoop != null && hum != null && hum.gameObject.activeInHierarchy)
                 humLoop.PlayLoop(Moving, 2f, 3f);
+            foreach (Dock dock in docks)
+                dock.Speaker?.PlayLoop(Moving, 1.5f, 2f);
             if (car == null)
                 return;
             Transform root = car.transform.parent;
@@ -1099,9 +1420,19 @@ namespace Upstairs.Services
             {
                 landWait -= dt;
                 if (landWait <= 0f)
-                    doorsHeld = false;
+                {
+                    if (queued >= 0 && queued != atDock && SemiFunc.IsMasterClientOrSingleplayer() && TryDepart(queued))
+                        queued = -1;
+                    else
+                    {
+                        queued = -1;
+                        doorsHeld = false;
+                    }
+                }
             }
-            float target = doorsHeld ? 0f : (AnyoneNear(root.position) ? 1f : 0f);
+            if (openHold > 0f)
+                openHold -= dt;
+            float target = doorsHeld ? 0f : (openHold > 0f || AnyoneNear(root.position) ? 1f : 0f);
             float open = Mathf.MoveTowards(doorOpen, target, dt * 2f);
             if (open != doorOpen)
             {
@@ -1164,9 +1495,13 @@ namespace Upstairs.Services
                 landWait = LandPause;
                 Play(landThud, next);
                 Play(sounds?.soundActivate3, next);
+                PlayAtDocks(landThud, next, 0.4f);
+                PlayAtDocks(sounds?.soundActivate3, next, 0.5f);
                 SemiFunc.CameraShakeImpactDistance(next, 3f, 0.2f, 4f, 18f);
                 // The whole building hears an elevator land.
                 EnemyDirector.instance?.SetInvestigate(next, 20f);
+                if (queued < 0)
+                    SendPursuers(next - Vector3.up * FloorOffset);
             }
         }
 

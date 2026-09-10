@@ -168,9 +168,9 @@ namespace Upstairs.Services
 
         private void BuildCars()
         {
-            var spots = new List<(Vector3, float, string)>();
+            var spots = new List<(Vector3, float, string, Vector3)>();
             foreach (Pad pad in pads)
-                spots.Add((pad.Position, pad.Yaw, pad.Name));
+                spots.Add((pad.Position, pad.Yaw, pad.Name, pad.Landing));
             Elevator.Build(spots);
         }
 

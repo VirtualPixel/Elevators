@@ -17,6 +17,7 @@ namespace Upstairs.Configuration
         public static ConfigEntry<int> FloorSize = null!;
         public static ConfigEntry<int> ExtraLoot = null!;
         public static ConfigEntry<bool> EnemiesOnNewFloors = null!;
+        public static ConfigEntry<float> MonsterPatrolInterval = null!;
         public static ConfigEntry<string> AvoidRooms = null!;
         public static ConfigEntry<float> LiftCooldown = null!;
         public static ConfigEntry<bool> VoidRescue = null!;
@@ -46,6 +47,9 @@ namespace Upstairs.Configuration
 
             EnemiesOnNewFloors = config.Bind("Floors", "EnemiesOnNewFloors", true,
                 "Monsters can turn up on the new floors. The game already moves a monster that has lost you to a fresh spot some way off, and with this on those spots include the floor you rode to, so a ride buys time, not safety. The elevator is loud: leaving and arriving draws anything nearby to the shaft. Off keeps them to the ground floor.");
+            MonsterPatrolInterval = config.Bind("Floors", "MonsterPatrolInterval", 90f, new ConfigDescription(
+                "Seconds between monsters taking the elevator on their own. An idle one near a dock calls the car, boards as the doors shut, and steps out on another floor, more often than not one with someone on it. You hear the whole trip through the doors. 0 turns patrols off. Needs EnemiesOnNewFloors.",
+                new AcceptableValueRange<float>(0f, 600f)));
 
             AvoidRooms = config.Bind("Floors", "AvoidRooms", "Bottomless,Outside",
                 "Comma separated. A room whose name contains one of these is never picked for a new floor. " +

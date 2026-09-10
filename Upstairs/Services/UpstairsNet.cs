@@ -150,13 +150,11 @@ namespace Upstairs.Services
                 Elevator.TryDepart(dock);
         }
 
-        // Host to everyone: a button was pressed, play the click. The presser already heard it.
-        internal static void SendPress(int buttonView, int grabberView)
+        // Host to the other clients: a button was pressed, play the click, or the refusal.
+        internal static void SendPress(int buttonView, int grabberView, bool denied)
         {
             if (SemiFunc.IsMultiplayer() && Instance != null)
-                Instance.photonView.RPC(nameof(UpstairsPressRPC), RpcTarget.All, buttonView, grabberView);
-            else
-                Elevator.PlayPress(buttonView, grabberView);
+                Instance.photonView.RPC(nameof(UpstairsPressRPC), RpcTarget.Others, buttonView, grabberView, denied);
         }
 
         // The player holding the roof hatch tells the others where it is; settle means they let go.
@@ -173,10 +171,10 @@ namespace Upstairs.Services
         }
 
         [PunRPC]
-        private void UpstairsPressRPC(int buttonView, int grabberView, PhotonMessageInfo _info = default(PhotonMessageInfo))
+        private void UpstairsPressRPC(int buttonView, int grabberView, bool denied, PhotonMessageInfo _info = default(PhotonMessageInfo))
         {
             if (SemiFunc.MasterOnlyRPC(_info))
-                Elevator.PlayPress(buttonView, grabberView);
+                Elevator.PlayPress(buttonView, grabberView, denied);
         }
     }
 }
