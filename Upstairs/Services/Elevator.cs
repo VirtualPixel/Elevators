@@ -125,6 +125,7 @@ namespace Upstairs.Services
                 return;
             }
             sounds = Object.FindObjectOfType<ExtractionPoint>();
+            Plugin.LogInfo($"[Elevator] one-shot sounds {(sounds != null ? "from the extraction point" : "MISSING, no extraction point found")}");
             foreach ((Vector3 pad, float yaw, string name) in pads)
                 docks.Add(new Dock { Position = pad, Yaw = yaw, Name = name });
 
@@ -179,9 +180,27 @@ namespace Upstairs.Services
             }
             if (hum != null)
             {
-                hum.playOnAwake = false;
-                hum.loop = true;
+                AudioClip clip = hum.clip;
                 hum.Stop();
+                hum.gameObject.SetActive(false);
+                var motor = new GameObject("motor").AddComponent<AudioSource>();
+                motor.transform.SetParent(body.transform, false);
+                motor.transform.localPosition = new Vector3(0f, 1.8f, 0.3f);
+                motor.clip = clip;
+                motor.loop = true;
+                motor.playOnAwake = false;
+                motor.spatialBlend = 1f;
+                motor.rolloffMode = AudioRolloffMode.Logarithmic;
+                motor.minDistance = 3f;
+                motor.maxDistance = 30f;
+                motor.volume = 0.9f;
+                motor.outputAudioMixerGroup = hum.outputAudioMixerGroup != null ? hum.outputAudioMixerGroup : (AudioManager.instance != null ? AudioManager.instance.SoundMasterGroup : null);
+                hum = motor;
+                Plugin.LogInfo($"[Elevator] motor clip: {(clip != null ? clip.name : "none")}");
+            }
+            else
+            {
+                Plugin.LogInfo("[Elevator] the carriage has no audio loop child, the ride is silent");
             }
             Transform cables = body.transform.Find("Cables");
             if (cables != null)
@@ -206,9 +225,10 @@ namespace Upstairs.Services
             MeshFilter cage = body.GetComponent<MeshFilter>();
             float wallX = cage != null && cage.sharedMesh != null ? cage.sharedMesh.bounds.extents.x - 0.1f : 1.05f;
             cageHalfWidth = wallX + 0.1f;
-            Transform panel = Panel(body.transform, new Vector3(wallX - 0.02f, -0.5f, -0.6f), Quaternion.Euler(0f, -90f, 0f), 0.5f);
-            AddButton(panel, new Vector3(0f, 0.12f, -0.03f), Quaternion.identity, ButtonKind.Up, -1, "UP");
-            AddButton(panel, new Vector3(0f, -0.12f, -0.03f), Quaternion.identity, ButtonKind.Down, -1, "DOWN");
+            // The panel's forward points into the car; buttons and labels stand proud of the plate along it.
+            Transform panel = Panel(body.transform, new Vector3(wallX - 0.02f, -0.5f, -0.6f), Quaternion.LookRotation(Vector3.left), 0.5f);
+            AddButton(panel, new Vector3(0f, 0.12f, 0.035f), ButtonKind.Up, -1, "UP");
+            AddButton(panel, new Vector3(0f, -0.12f, 0.035f), ButtonKind.Down, -1, "DOWN");
             var panelLight = new GameObject("panel light").AddComponent<Light>();
             panelLight.transform.SetParent(body.transform, false);
             panelLight.transform.localPosition = new Vector3(wallX - 0.35f, -0.4f, -0.6f);
@@ -338,8 +358,9 @@ namespace Upstairs.Services
             Renderer carRenderer = car!.GetComponent<Renderer>();
             if (carRenderer != null)
                 post.GetComponent<Renderer>().sharedMaterial = carRenderer.sharedMaterial;
-            Transform plate = Panel(post.transform, new Vector3(0f, 0.5f, -0.6f), Quaternion.identity, 0.3f);
-            AddButton(plate, new Vector3(0f, 0f, -0.03f), Quaternion.identity, ButtonKind.Call, index, "CALL");
+            // Faces the room, which is the car's -z.
+            Transform plate = Panel(post.transform, new Vector3(0f, 0.5f, -0.6f), Quaternion.Euler(0f, 180f, 0f), 0.3f);
+            AddButton(plate, new Vector3(0f, 0f, 0.035f), ButtonKind.Call, index, "CALL");
             var glow = new GameObject("call light").AddComponent<Light>();
             glow.transform.SetParent(post.transform, false);
             glow.transform.localPosition = new Vector3(0f, 0.6f, -1.2f);
@@ -372,15 +393,15 @@ namespace Upstairs.Services
             return holder;
         }
 
-        private static void AddButton(Transform panel, Vector3 localPos, Quaternion localRot, ButtonKind kind, int dock, string label)
+        private static void AddButton(Transform panel, Vector3 localPos, ButtonKind kind, int dock, string label)
         {
             buttonMaterial ??= new Material(Shader.Find("Sprites/Default")) { color = new Color(1f, 0.82f, 0.45f) };
             var button = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             button.name = "Upstairs button " + kind;
             button.transform.SetParent(panel, false);
             button.transform.localPosition = localPos;
-            button.transform.localRotation = localRot * Quaternion.Euler(90f, 0f, 0f);
-            button.transform.localScale = new Vector3(0.09f, 0.02f, 0.09f);
+            button.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+            button.transform.localScale = new Vector3(0.14f, 0.03f, 0.14f);
             button.GetComponent<Renderer>().sharedMaterial = buttonMaterial;
             Collider round = button.GetComponent<Collider>();
             Object.Destroy(round);
@@ -390,8 +411,8 @@ namespace Upstairs.Services
             lift.Kind = kind;
             lift.Dock = dock;
 
-            Transform text = NativeText.CreateWorld(panel, label, 0.2f);
-            text.localPosition = localPos + new Vector3(0f, -0.075f, -0.005f);
+            Transform text = NativeText.CreateWorld(panel, label, 0.22f);
+            text.localPosition = localPos + new Vector3(0f, -0.1f, 0f);
             text.localRotation = Quaternion.Euler(0f, 180f, 0f);
         }
 
@@ -470,7 +491,12 @@ namespace Upstairs.Services
             GameObject copy = Object.Instantiate(pit.gameObject);
             copy.name = "Upstairs shaft pit";
             copy.transform.SetPositionAndRotation(at, facing);
-            copy.transform.localScale = new Vector3(6f, 3f, 6f);
+            copy.transform.localScale = Vector3.one;
+            foreach (BoxCollider box in copy.GetComponentsInChildren<BoxCollider>(true))
+            {
+                box.center = Vector3.zero;
+                box.size = new Vector3(5f, 2f, 5f);
+            }
             copy.SetActive(true);
         }
 
