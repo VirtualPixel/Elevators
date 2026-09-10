@@ -83,7 +83,6 @@ namespace Upstairs.Services
         private static Quaternion hatchClosed;
         private static float hatchOpen;
         private static bool hatchWantOpen;
-        private static readonly List<Collider> riderColliders = new List<Collider>();
 
         public static bool Built => car != null;
         public static bool Moving => toDock >= 0;
@@ -99,7 +98,6 @@ namespace Upstairs.Services
                 if (g.name == "Upstairs dock" || g.name == "Upstairs shaft")
                     Object.Destroy(g);
             }
-            RiderCollision(true);
             car = null;
             doorL = doorR = null;
             hum = null;
@@ -573,8 +571,6 @@ namespace Upstairs.Services
             atDock = -1;
             lastCarPos = root.position;
             localRiding = LocalInside();
-            if (localRiding)
-                RiderCollision(false);
             Play(sounds?.soundActivate1, root.position);
             if (hum != null)
                 hum.Play();
@@ -636,7 +632,9 @@ namespace Upstairs.Services
             Vector3 before = body.position;
             if (doorWait > 0f)
             {
+                // Doors still closing: whoever steps in now rides too.
                 doorWait -= dt;
+                localRiding = localRiding || LocalInside();
                 return;
             }
             // Accelerate, cruise, brake, never harder than a body in free fall, so a rider the carry
@@ -649,12 +647,7 @@ namespace Upstairs.Services
             body.MovePosition(next);
             Vector3 delta = next - before;
             if (localRiding)
-            {
-                // The game switches the avatar's collider back on every frame, so it goes off again
-                // right before each physics step for as long as the ride lasts.
-                RiderCollision(false);
                 Carry(delta, next.y - FloorOffset, delta.y / dt);
-            }
             lastCarPos = next;
             if (arrived)
             {
@@ -663,7 +656,6 @@ namespace Upstairs.Services
                 doorsHeld = false;
                 if (hum != null)
                     hum.Stop();
-                RiderCollision(true);
                 Play(sounds?.soundActivate3, next);
             }
         }
@@ -684,32 +676,6 @@ namespace Upstairs.Services
                 return 0.5f * Accel * ramp * ramp + peak * (t - ramp);
             float tb = t - ramp - cruise;
             return 0.5f * Accel * ramp * ramp + peak * cruise + peak * tb - 0.5f * Accel * tb * tb;
-        }
-
-        // Outside a real shaft the trip passes through whatever roof or floor sits in the way. The
-        // rider's own colliders come off for the ride, since the car floor snap is what holds them.
-        private static void RiderCollision(bool on)
-        {
-            if (on)
-            {
-                foreach (Collider c in riderColliders)
-                    if (c) c.enabled = true;
-                riderColliders.Clear();
-                return;
-            }
-            foreach (Component? root in new Component?[] { PlayerController.instance, PlayerAvatar.instance })
-            {
-                if (root == null)
-                    continue;
-                foreach (Collider c in root.GetComponentsInChildren<Collider>())
-                {
-                    if (c.isTrigger)
-                        continue;
-                    if (!riderColliders.Contains(c))
-                        riderColliders.Add(c);
-                    c.enabled = false;
-                }
-            }
         }
 
         private static bool AnyoneNear(Vector3 carPos)
