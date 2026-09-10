@@ -12,7 +12,7 @@ Anyone in the lobby without the mod still gets moved: they stand where the car d
 
 Where the elevator stands:
 
-- Museum: the real thing. The level's own elevator room stands on every floor with its shafts lined up, the stuck car is gone, its doors become landing doors, and the elevator rides the actual shaft.
+- Museum: the real thing. The level's own elevator room stands on every floor with its shafts lined up, the stuck car is gone, its doors become landing doors, and the elevator rides the actual shaft. It also stops at that room's sub floor on the way, so the loot down there stays reachable.
 - Manor: at the top of the long stairs.
 - Arctic: the top of the stair corridor.
 - Wizard: up in the upstairs classroom.

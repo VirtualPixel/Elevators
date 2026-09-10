@@ -29,6 +29,8 @@ namespace Upstairs.Services
             public string Name = "";
             public Pad? Up;
             public Pad? Down;
+            // An extra elevator stop with no floor of its own; the tumble fallback ignores it.
+            public bool Stop;
         }
 
         private sealed class Rider
@@ -101,6 +103,7 @@ namespace Upstairs.Services
             }
             pads.Add(ground);
             groundPad = ground;
+            AddSubFloor(Session.GroundLiftModule(), ground);
 
             if (Session.Up != null)
             {
@@ -110,6 +113,7 @@ namespace Upstairs.Services
                     ground.Up = up;
                     up.Down = ground;
                     pads.Add(up);
+                    AddSubFloor(Session.Up.LiftModule(), up);
                 }
             }
             if (Session.Down != null)
@@ -120,6 +124,7 @@ namespace Upstairs.Services
                     ground.Down = down;
                     down.Up = ground;
                     pads.Add(down);
+                    AddSubFloor(Session.Down.LiftModule(), down);
                 }
             }
             active = pads.Count > 1;
@@ -213,7 +218,7 @@ namespace Upstairs.Services
                 Pad? here = PadUnder(pos);
                 if (here != null)
                 {
-                    if (Elevator.Built && UpstairsNet.IsModded(avatar))
+                    if (here.Stop || (Elevator.Built && UpstairsNet.IsModded(avatar)))
                         continue;
                     Pad? dest = avatar.isCrouching ? (here.Down ?? here.Up) : (here.Up ?? here.Down);
                     if (dest != null)
@@ -379,6 +384,36 @@ namespace Upstairs.Services
             if (!NearestPoint(module, new Vector3(groundSpot.x, center.y, groundSpot.z), out Vector3 spot))
                 spot = OnNavMesh(center, 6f);
             return new Pad { Position = spot, Landing = spot, Name = floor.Name, Yaw = FacingAway(center, spot) };
+        }
+
+        // The Museum elevator room has a sub floor 8 m down that the shaft used to drop you into. With
+        // the car in the shaft that floor needs a stop of its own, or its loot is out of reach.
+        private void AddSubFloor(Module? module, Pad main)
+        {
+            if (module == null || Session.Site == null || !Session.Site.Shaft || !module.name.StartsWith(Session.Site.ModuleName))
+                return;
+            float floorY = module.transform.position.y;
+            float lowest = floorY;
+            Vector3 landing = Vector3.zero;
+            foreach (LevelPoint point in module.GetComponentsInChildren<LevelPoint>())
+            {
+                if (point.transform.position.y < lowest)
+                {
+                    lowest = point.transform.position.y;
+                    landing = point.transform.position;
+                }
+            }
+            if (floorY - lowest < 4f)
+                return;
+            var sub = new Pad
+            {
+                Position = new Vector3(main.Position.x, lowest, main.Position.z),
+                Landing = landing,
+                Name = main.Name + " sub",
+                Yaw = main.Yaw,
+                Stop = true
+            };
+            pads.Add(sub);
         }
 
         // Where the room's own elevator car sits, at the room's floor level, turned the way the car is.

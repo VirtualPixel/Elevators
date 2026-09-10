@@ -200,7 +200,8 @@ namespace Upstairs.Services
                 if (carriage == null)
                     continue;
                 Vector3 d = carriage.position - dock.Position;
-                if (new Vector2(d.x, d.z).magnitude > 1.5f || Mathf.Abs(module.transform.position.y - dock.Position.y) > 1f)
+                float above = dock.Position.y - module.transform.position.y;
+                if (new Vector2(d.x, d.z).magnitude > 1.5f || above > 1f || above < -12f)
                     continue;
 
                 Transform shaft = carriage.parent;

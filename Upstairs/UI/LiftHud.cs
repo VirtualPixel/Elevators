@@ -108,7 +108,7 @@ namespace Upstairs.UI
                 way += ", above";
             else if (rise < -6f)
                 way += ", below";
-            string label = Elevator.Built ? "ELEVATOR" : pad == "ground" ? "LIFT" : pad == "upstairs" ? "LIFT DOWN" : "LIFT UP";
+            string label = Elevator.Built ? "ELEVATOR" : pad.StartsWith("ground") ? "LIFT" : pad.StartsWith("upstairs") ? "LIFT DOWN" : "LIFT UP";
             return $"{label}  {Mathf.RoundToInt(distance)} m, {way}";
         }
 
