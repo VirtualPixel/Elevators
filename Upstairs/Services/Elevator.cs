@@ -23,7 +23,8 @@ namespace Upstairs.Services
         {
             Call,
             Up,
-            Down
+            Down,
+            Hatch
         }
 
         // Drives the car from FixedUpdate so the player standing in it is moved in physics time.
@@ -77,6 +78,10 @@ namespace Upstairs.Services
         private static bool localRiding;
         private static AudioSource? hum;
         private static Rigidbody? body;
+        private static Transform? hatch;
+        private static Quaternion hatchClosed;
+        private static float hatchOpen;
+        private static bool hatchWantOpen;
         private static readonly List<Collider> riderColliders = new List<Collider>();
 
         public static bool Built => car != null;
@@ -97,6 +102,9 @@ namespace Upstairs.Services
             car = null;
             doorL = doorR = null;
             hum = null;
+            hatch = null;
+            hatchOpen = 0f;
+            hatchWantOpen = false;
             docks.Clear();
             atDock = -1;
             toDock = -1;
@@ -129,6 +137,9 @@ namespace Upstairs.Services
             {
                 BuildCallButton(i);
                 OpenShaft(docks[i]);
+                Vector3 from = docks[i].Position + Vector3.up * 1f;
+                string under = Physics.Raycast(from, Vector3.down, out RaycastHit floorHit, 3f, ~0, QueryTriggerInteraction.Ignore) ? $"{floorHit.collider.name} {floorHit.distance:0.00} m down" : "NOTHING within 3 m";
+                Plugin.LogInfo($"[Elevator] under the {docks[i].Name} dock: {under}");
             }
             BuildShaft();
             Plugin.LogInfo($"[Elevator] car at {docks[ground].Name}, {docks.Count} docks");
@@ -143,7 +154,21 @@ namespace Upstairs.Services
             StripScripts(body);
             foreach (Transform child in body.transform)
             {
-                if (child.name.StartsWith("Elevator Hatch") || child.name.StartsWith("Invisible Wall"))
+                if (child.name.StartsWith("Elevator Hatch"))
+                {
+                    // The roof hatch stays, as a small door you grab to swing open and shut.
+                    hatch = child.Find("Hinge Template");
+                    if (hatch != null)
+                    {
+                        hatchClosed = hatch.localRotation;
+                        foreach (Collider c in hatch.GetComponentsInChildren<Collider>())
+                        {
+                            var lift = c.gameObject.AddComponent<LiftButton>();
+                            lift.Kind = ButtonKind.Hatch;
+                        }
+                    }
+                }
+                else if (child.name.StartsWith("Invisible Wall"))
                     child.gameObject.SetActive(false);
                 else if (child.name.StartsWith("Audio Loop") && hum == null)
                     hum = child.GetComponent<AudioSource>();
@@ -174,9 +199,21 @@ namespace Upstairs.Services
             lamp.range = 5f;
             lamp.shadows = LightShadows.None;
 
-            // Two buttons on the wall by the doors, the same mesh the Museum uses by its shaft.
-            AddButton(body.transform, new Vector3(1.05f, -0.6f, -0.85f), Quaternion.Euler(0f, -90f, 0f), ButtonKind.Up, -1);
-            AddButton(body.transform, new Vector3(1.05f, -0.95f, -0.85f), Quaternion.Euler(0f, -90f, 0f), ButtonKind.Down, -1);
+            // Two buttons on the right hand wall just inside the doors, the same mesh the Museum uses by
+            // its shaft, set off the cage's real width so they sit on the wall and not in it.
+            MeshFilter cage = body.GetComponent<MeshFilter>();
+            float wallX = cage != null && cage.sharedMesh != null ? cage.sharedMesh.bounds.extents.x - 0.1f : 1.05f;
+            AddButton(body.transform, new Vector3(wallX, -0.3f, -0.6f), Quaternion.Euler(0f, -90f, 0f), ButtonKind.Up, -1);
+            AddButton(body.transform, new Vector3(wallX, -0.7f, -0.6f), Quaternion.Euler(0f, -90f, 0f), ButtonKind.Down, -1);
+            var panelLight = new GameObject("panel light").AddComponent<Light>();
+            panelLight.transform.SetParent(body.transform, false);
+            panelLight.transform.localPosition = new Vector3(wallX - 0.35f, -0.4f, -0.6f);
+            panelLight.type = LightType.Point;
+            panelLight.color = new Color(1f, 0.75f, 0.45f);
+            panelLight.intensity = 0.9f;
+            panelLight.range = 1.6f;
+            panelLight.shadows = LightShadows.None;
+            Plugin.LogInfo($"[Elevator] cage half width {wallX + 0.1f:0.00}, panel at x={wallX:0.00}");
 
             holder.transform.SetPositionAndRotation(dock.Position + Vector3.up * FloorOffset, Quaternion.Euler(0f, dock.Yaw, 0f));
             Rigidbody rb = holder.AddComponent<Rigidbody>();
@@ -300,37 +337,38 @@ namespace Upstairs.Services
             lift.Dock = dock;
         }
 
-        // A dark box around the path between the lowest and highest dock, faces turned inward so
-        // the ride is a shaft and not a look at the void between floors.
+        // A dark box around the path in the gap between each pair of floors, faces turned inward,
+        // so the ride is a shaft and not a look at the void. It stops short of the docks, so a car
+        // standing in a room is just a car.
+        private static Material? shaftMaterial;
+
         private static void BuildShaft()
         {
-            float low = float.MaxValue, high = float.MinValue;
-            Vector3 centre = Vector3.zero;
-            foreach (Dock d in docks)
+            var sorted = new List<Dock>(docks);
+            sorted.Sort((a, b) => a.Position.y.CompareTo(b.Position.y));
+            shaftMaterial ??= new Material(Shader.Find("Sprites/Default")) { color = new Color(0.04f, 0.04f, 0.05f) };
+            for (int i = 0; i + 1 < sorted.Count; i++)
             {
-                low = Mathf.Min(low, d.Position.y);
-                high = Mathf.Max(high, d.Position.y);
-                centre += d.Position;
-            }
-            centre /= docks.Count;
-            float height = high - low + 5f;
-            var shaft = new GameObject("Upstairs shaft");
-            shaft.transform.position = new Vector3(centre.x, (low + high) * 0.5f + FloorOffset, centre.z);
-            Material? mat = car != null && car.GetComponent<Renderer>() != null ? car.GetComponent<Renderer>().sharedMaterial : null;
-            for (int i = 0; i < 4; i++)
-            {
-                var wall = GameObject.CreatePrimitive(PrimitiveType.Quad);
-                Object.Destroy(wall.GetComponent<Collider>());
-                wall.transform.SetParent(shaft.transform, false);
-                Quaternion turn = Quaternion.Euler(0f, 90f * i, 0f);
-                wall.transform.localPosition = turn * new Vector3(0f, 0f, 3f);
-                wall.transform.localRotation = turn * Quaternion.Euler(0f, 180f, 0f);
-                wall.transform.localScale = new Vector3(6f, height, 1f);
-                Renderer r = wall.GetComponent<Renderer>();
-                if (mat != null)
-                    r.sharedMaterial = mat;
-                else
-                    r.material.color = new Color(0.05f, 0.05f, 0.06f);
+                float bottom = sorted[i].Position.y + 4.6f;
+                float top = sorted[i + 1].Position.y - 0.2f;
+                if (top - bottom < 1f)
+                    continue;
+                Vector3 a = sorted[i].Position;
+                Vector3 b = sorted[i + 1].Position;
+                var shaft = new GameObject("Upstairs shaft");
+                shaft.transform.position = new Vector3((a.x + b.x) * 0.5f, (bottom + top) * 0.5f, (a.z + b.z) * 0.5f);
+                shaft.transform.rotation = Quaternion.Euler(0f, sorted[i].Yaw, 0f);
+                for (int side = 0; side < 4; side++)
+                {
+                    var wall = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                    Object.Destroy(wall.GetComponent<Collider>());
+                    wall.transform.SetParent(shaft.transform, false);
+                    Quaternion turn = Quaternion.Euler(0f, 90f * side, 0f);
+                    wall.transform.localPosition = turn * new Vector3(0f, 0f, 2.6f);
+                    wall.transform.localRotation = turn * Quaternion.Euler(0f, 180f, 0f);
+                    wall.transform.localScale = new Vector3(5.2f, top - bottom, 1f);
+                    wall.GetComponent<Renderer>().sharedMaterial = shaftMaterial;
+                }
             }
         }
 
@@ -417,6 +455,16 @@ namespace Upstairs.Services
 
             if (!Moving)
                 localRiding = false;
+
+            if (hatch != null)
+            {
+                float h = Mathf.MoveTowards(hatchOpen, hatchWantOpen ? 1f : 0f, dt * 2.5f);
+                if (h != hatchOpen)
+                {
+                    hatchOpen = h;
+                    hatch.localRotation = hatchClosed * Quaternion.Euler(-110f * h, 0f, 0f);
+                }
+            }
 
             float target = doorsHeld ? 0f : (AnyoneNear(root.position) ? 1f : 0f);
             float open = Mathf.MoveTowards(doorOpen, target, dt * 2f);
@@ -566,6 +614,12 @@ namespace Upstairs.Services
             LiftButton button = hit.collider.GetComponentInParent<LiftButton>();
             if (button == null)
                 return;
+            if (button.Kind == ButtonKind.Hatch)
+            {
+                hatchWantOpen = !hatchWantOpen;
+                Play(sounds?.soundActivate2, hit.point);
+                return;
+            }
             int target = button.Kind switch
             {
                 ButtonKind.Call => button.Dock,
@@ -595,6 +649,26 @@ namespace Upstairs.Services
                 }
             }
             return best;
+        }
+
+        // Which button the local player is looking at right now, for the HUD prompt.
+        public static string LookingAt()
+        {
+            if (car == null)
+                return "";
+            Camera cam = Camera.main;
+            if (cam == null || !Physics.Raycast(cam.transform.position, cam.transform.forward, out RaycastHit hit, 2.6f))
+                return "";
+            LiftButton button = hit.collider.GetComponentInParent<LiftButton>();
+            if (button == null)
+                return "";
+            return button.Kind switch
+            {
+                ButtonKind.Up => "up",
+                ButtonKind.Down => "down",
+                ButtonKind.Hatch => hatchWantOpen ? "close the hatch" : "open the hatch",
+                _ => "call"
+            };
         }
 
         public static string LocalStatus()

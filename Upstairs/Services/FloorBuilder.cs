@@ -17,7 +17,7 @@ namespace Upstairs.Services
             public int I1, I2, I3, O1, O2, O3;
         }
 
-        public static IEnumerator Build(LevelGenerator lg, Floor floor, float groundTop, float groundBottom, List<string> avoid, PrefabRef? liftPrefab = null, float liftRotation = 0f)
+        public static IEnumerator Build(LevelGenerator lg, Floor floor, float groundTop, float groundBottom, List<string> avoid, PrefabRef? liftPrefab = null, float liftRotation = 0f, int liftSide = -1)
         {
             Level level = lg.Level;
             Pool normal = MakePool(level.ModulesNormal1, level.ModulesNormal2, level.ModulesNormal3, avoid);
@@ -91,7 +91,8 @@ namespace Upstairs.Services
                 Module module = room.GetComponent<Module>();
                 module.GridX = cell.X;
                 module.GridY = cell.Y;
-                module.ModuleConnectionSet(cell.Top, cell.Bottom, cell.Right, cell.Left, false);
+                bool lift = cell.X == floor.Plan.LiftX && cell.Y == floor.Plan.LiftY;
+                module.ModuleConnectionSet(cell.Top || (lift && liftSide == 0), cell.Bottom || (lift && liftSide == 2), cell.Right || (lift && liftSide == 1), cell.Left || (lift && liftSide == 3), false);
                 floor.Modules.Add(module);
                 Plugin.LogVerbose($"[Build] {floor.Name} ({cell.X},{cell.Y}) {cell.Kind} rot {cell.RotationY:0} {pick.PrefabName}");
                 yield return null;

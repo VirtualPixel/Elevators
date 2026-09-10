@@ -72,7 +72,9 @@ namespace Upstairs.Services
         // ground cells, then classifies each cell the way the game's own generator would.
         // liftAxisVertical: pin the lift cell as a passage whose doors only face along that axis, so the
         // same elevator module can stand on every floor with its shafts lined up. Null leaves it free.
-        public static FloorPlan Build(bool[,] ground, int liftX, int liftY, int count, int passageMax, Random rng, bool? liftAxisVertical = null)
+        // liftOpenSide: 0 top, 1 right, 2 bottom, 3 left. That side of the lift cell stays free of rooms
+        // and doors, since the elevator stands in it. -1 for none.
+        public static FloorPlan Build(bool[,] ground, int liftX, int liftY, int count, int passageMax, Random rng, bool? liftAxisVertical = null, int liftOpenSide = -1)
         {
             int width = ground.GetLength(0);
             int height = ground.GetLength(1);
@@ -130,6 +132,13 @@ namespace Upstairs.Services
             {
                 Unlink(plan, lift, top: true);
                 UnlinkBottom(plan, lift);
+            }
+            switch (liftOpenSide)
+            {
+                case 0: Unlink(plan, lift, top: true); break;
+                case 1: Unlink(plan, lift, right: true); break;
+                case 2: UnlinkBottom(plan, lift); break;
+                case 3: Unlink(plan, lift, left: true); break;
             }
 
             int passages = 0;

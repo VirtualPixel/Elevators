@@ -20,6 +20,8 @@ namespace Upstairs.Services
         public static int LiftY { get; private set; }
         public static float GroundTop { get; private set; }
         public static float GroundBottom { get; private set; }
+        // The lift cell wall the elevator stands in: 0 top (+z), 1 right (+x), 2 bottom (-z), 3 left (-x). -1 when the car rides a real shaft.
+        public static int LiftSide { get; private set; } = -1;
         public static string Hint { get; private set; } = "";
         // What a client knows from the host's room property.
         private static bool remoteUp;
@@ -33,6 +35,10 @@ namespace Upstairs.Services
         private static Module.Type liftType;
         private static int roomsFromTruck;
         private static bool? liftAxisVertical;
+        private static bool[,]? groundGrid;
+        private static int cellCount;
+        private static int passageCap;
+        private static System.Random? planRng;
 
         public static void Reset()
         {
@@ -46,6 +52,7 @@ namespace Upstairs.Services
             sitePrefab = null;
             Override = null;
             liftAxisVertical = null;
+            LiftSide = -1;
             Hint = "";
             GroundTop = 0f;
             GroundBottom = 0f;
@@ -115,11 +122,15 @@ namespace Upstairs.Services
 
             int count = FloorGap.CellCount(activeCells, PluginConfig.FloorSize.Value);
             int passageMax = lg.Level.PassageMaxAmount;
+            groundGrid = ground;
+            cellCount = count;
+            passageCap = passageMax;
+            planRng = rng;
             bool? axis = Site != null && Site.Shaft ? liftAxisVertical : null;
             if (PluginConfig.UpperFloor.Value)
-                UpPlan = FloorPlan.Build(ground, LiftX, LiftY, count, passageMax, rng, axis);
+                UpPlan = FloorPlan.Build(ground, LiftX, LiftY, count, passageMax, rng, axis, LiftSide);
             if (PluginConfig.Basement.Value)
-                DownPlan = FloorPlan.Build(ground, LiftX, LiftY, count, passageMax, rng, axis);
+                DownPlan = FloorPlan.Build(ground, LiftX, LiftY, count, passageMax, rng, axis, LiftSide);
             roomsFromTruck = RoomsFromTruck(ground, width / 2, 0, LiftX, LiftY);
             Hint = Site?.Hint ?? FallbackHint();
             Active = true;
@@ -147,6 +158,7 @@ namespace Upstairs.Services
         public static IEnumerator BuildFloors(LevelGenerator lg)
         {
             MeasureGround();
+            SettleLiftSide();
             List<string> avoid = RoomFilter.Parse(PluginConfig.AvoidRooms.Value);
             // A shaft site stands the same elevator room on every floor, turned the way the ground one landed.
             PrefabRef? liftPrefab = null;
@@ -166,7 +178,7 @@ namespace Upstairs.Services
             {
                 Up = new Floor(UpPlan, above: true);
                 SpanUnder(UpPlan, out float top, out float bottom);
-                IEnumerator build = FloorBuilder.Build(lg, Up, top, bottom, avoid, liftPrefab, liftRotation);
+                IEnumerator build = FloorBuilder.Build(lg, Up, top, bottom, avoid, liftPrefab, liftRotation, LiftSide);
                 while (build.MoveNext())
                     yield return build.Current;
                 if (Up.Modules.Count == 0)
@@ -176,7 +188,7 @@ namespace Upstairs.Services
             {
                 Down = new Floor(DownPlan, above: false);
                 SpanUnder(DownPlan, out float top, out float bottom);
-                IEnumerator build = FloorBuilder.Build(lg, Down, top, bottom, avoid, liftPrefab, liftRotation);
+                IEnumerator build = FloorBuilder.Build(lg, Down, top, bottom, avoid, liftPrefab, liftRotation, LiftSide);
                 while (build.MoveNext())
                     yield return build.Current;
                 if (Down.Modules.Count == 0)
@@ -303,6 +315,20 @@ namespace Upstairs.Services
                 sitePrefab = null;
             }
 
+            // A plain room with a wall nobody is behind: the elevator goes in that wall.
+            var withFreeSide = new List<(int, int)>();
+            foreach ((int px, int py) in plain)
+            {
+                if (FreeSide(ground, px, py, rng) >= 0)
+                    withFreeSide.Add((px, py));
+            }
+            if (withFreeSide.Count > 0)
+            {
+                (LiftX, LiftY) = withFreeSide[rng.Next(withFreeSide.Count)];
+                LiftSide = FreeSide(ground, LiftX, LiftY, rng);
+                liftType = Module.Type.Normal;
+                return true;
+            }
             if (plain.Count > 0)
             {
                 (LiftX, LiftY) = plain[rng.Next(plain.Count)];
@@ -316,6 +342,93 @@ namespace Upstairs.Services
                 return true;
             }
             return false;
+        }
+
+        // The space beyond the opened wall has to be empty for the car to stand there. Some levels
+        // keep terrain or outer geometry behind their walls, so once the ground floor exists the
+        // chosen side is checked and swapped for another free one if something is in the way.
+        private static void SettleLiftSide()
+        {
+            if (LiftSide < 0 || groundGrid == null)
+                return;
+            Module? lift = GroundLiftModule();
+            if (lift == null)
+                return;
+            if (Clear(lift.transform.position, LiftSide, out string blocker))
+                return;
+            Plugin.LogInfo($"[Plan] side {LiftSide} of the lift room is blocked by {blocker}, looking for another");
+            int x = LiftX, y = LiftY;
+            var sides = new List<int>();
+            if (!Has(groundGrid, x, y + 1)) sides.Add(0);
+            if (!Has(groundGrid, x + 1, y)) sides.Add(1);
+            if (y > 0 && !Has(groundGrid, x, y - 1)) sides.Add(2);
+            if (!Has(groundGrid, x - 1, y)) sides.Add(3);
+            int chosen = -1;
+            foreach (int side in sides)
+            {
+                if (side != LiftSide && Clear(lift.transform.position, side, out _))
+                {
+                    chosen = side;
+                    break;
+                }
+            }
+            if (chosen < 0)
+            {
+                Plugin.LogAlways("[Plan] every free wall of the lift room is blocked, the elevator stands in the room instead");
+                LiftSide = -1;
+            }
+            else
+            {
+                LiftSide = chosen;
+            }
+            // Re-wire the room with the game's own neighbour flags; the patch adds the new side.
+            lift.ModuleConnectionSet(Has(groundGrid, x, y + 1), Has(groundGrid, x, y - 1) || y == 0, Has(groundGrid, x + 1, y), Has(groundGrid, x - 1, y), y == 0 && x == groundGrid.GetLength(0) / 2);
+            if (planRng != null)
+            {
+                bool? axis = Site != null && Site.Shaft ? liftAxisVertical : null;
+                if (UpPlan != null) UpPlan = FloorPlan.Build(groundGrid, LiftX, LiftY, cellCount, passageCap, planRng, axis, LiftSide);
+                if (DownPlan != null) DownPlan = FloorPlan.Build(groundGrid, LiftX, LiftY, cellCount, passageCap, planRng, axis, LiftSide);
+            }
+        }
+
+        private static bool Clear(Vector3 center, int side, out string blocker)
+        {
+            Vector3 dir = SideDirection(side);
+            float half = LevelGenerator.ModuleWidth * LevelGenerator.TileSize * 0.5f;
+            Vector3 probe = center + dir * (half + 2.0f) + Vector3.up * 2.2f;
+            Collider[] hits = Physics.OverlapBox(probe, new Vector3(1.2f, 1.8f, 1.2f), Quaternion.identity, LayerMask.GetMask("Default"), QueryTriggerInteraction.Ignore);
+            blocker = hits.Length > 0 ? hits[0].name : "";
+            return hits.Length == 0;
+        }
+
+        // A side of the cell with no room behind it. The truck side of the first row is never free.
+        private static int FreeSide(bool[,] ground, int x, int y, System.Random rng)
+        {
+            var free = new List<int>();
+            if (!Has(ground, x, y + 1)) free.Add(0);
+            if (!Has(ground, x + 1, y)) free.Add(1);
+            if (y > 0 && !Has(ground, x, y - 1)) free.Add(2);
+            if (!Has(ground, x - 1, y)) free.Add(3);
+            return free.Count == 0 ? -1 : free[rng.Next(free.Count)];
+        }
+
+        // World spot of the lift room's opened wall midpoint on the ground floor.
+        public static Vector3 LiftWallCenter()
+        {
+            float w = LevelGenerator.ModuleWidth * LevelGenerator.TileSize;
+            int half = Generator != null ? Generator.LevelWidth / 2 : 0;
+            var center = new Vector3(LiftX * w - half * w, 0f, LiftY * w + w / 2f);
+            return center + SideDirection(LiftSide) * (w / 2f);
+        }
+
+        public static Vector3 SideDirection(int side)
+        {
+            return side switch { 0 => Vector3.forward, 1 => Vector3.right, 2 => Vector3.back, _ => Vector3.left };
+        }
+
+        public static bool IsGroundLiftModule(Module module)
+        {
+            return Active && module.GridX == LiftX && module.GridY == LiftY && !module.StartRoom && Mathf.Abs(module.transform.position.y) < 0.5f;
         }
 
         private static bool Has(bool[,] ground, int x, int y)

@@ -156,3 +156,21 @@ namespace Upstairs.Tests
         }
     }
 }
+
+namespace Upstairs.Tests
+{
+    public class FloorPlanOpenSideTests
+    {
+        [Fact]
+        public void TheOpenSideStaysFreeOfRoomsAndDoors()
+        {
+            var g = new bool[3, 3];
+            for (int x = 0; x < 3; x++) for (int y = 0; y < 3; y++) g[x, y] = true;
+            FloorPlan plan = FloorPlan.Build(g, 1, 1, 9, 2, new Random(8), liftOpenSide: 1);
+            FloorPlan.Cell lift = plan.At(1, 1)!;
+            Assert.False(lift.Right);
+            Assert.False(plan.At(2, 1)!.Left);
+            Assert.DoesNotContain(plan.Doors, d => d.RightEdge && d.X == 1 && d.Y == 1);
+        }
+    }
+}

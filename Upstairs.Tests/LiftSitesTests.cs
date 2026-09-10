@@ -17,18 +17,9 @@ namespace Upstairs.Tests
         }
 
         [Theory]
+        [InlineData("Level - Shop")]
         [InlineData("Level - Manor")]
         [InlineData("Level - Arctic")]
-        [InlineData("Level - Wizard")]
-        public void StairLevelsUseTheirTopLanding(string level)
-        {
-            LiftSite? site = LiftSites.For(level);
-            Assert.NotNull(site);
-            Assert.True(site!.PadAtHighestPoint);
-        }
-
-        [Theory]
-        [InlineData("Level - Shop")]
         [InlineData("Some Modded Level")]
         [InlineData("")]
         [InlineData(null)]

@@ -360,6 +360,8 @@ namespace Upstairs.Services
                 NearestPoint(module, dock, out Vector3 landing);
                 return new Pad { Position = dock, Landing = OnNavMesh(landing, 2f), Name = "ground", Yaw = shaftYaw };
             }
+            if (Session.LiftSide >= 0)
+                return Doorway(module, "ground");
             if (site != null && !site.PadAtHighestPoint)
                 spot = module.transform.TransformPoint(new Vector3(site.PadX, site.PadY, site.PadZ));
             else if (site != null && site.PadAtHighestPoint && HighestPoint(module, out Vector3 top))
@@ -367,7 +369,9 @@ namespace Upstairs.Services
             else if (!NearestPoint(module, module.transform.position, out spot))
                 return null;
             Vector3 at = OnNavMesh(spot, 2f);
-            return new Pad { Position = at, Landing = at, Name = "ground", Yaw = FacingAway(module.transform.position, at) };
+            float yaw = FacingAway(module.transform.position, at);
+            AgainstWall(ref at, ref yaw);
+            return new Pad { Position = at, Landing = at, Name = "ground", Yaw = yaw };
         }
 
         private static Pad? FloorPad(Floor floor, Vector3 groundSpot)
@@ -376,6 +380,8 @@ namespace Upstairs.Services
             if (module == null)
                 return null;
             Vector3 center = module.transform.position;
+            if (Session.LiftSide >= 0)
+                return Doorway(module, floor.Name);
             if (Session.Site != null && Session.Site.Shaft && ShaftDock(module, out Vector3 dock, out float shaftYaw))
             {
                 NearestPoint(module, dock, out Vector3 landing);
@@ -383,7 +389,9 @@ namespace Upstairs.Services
             }
             if (!NearestPoint(module, new Vector3(groundSpot.x, center.y, groundSpot.z), out Vector3 spot))
                 spot = OnNavMesh(center, 6f);
-            return new Pad { Position = spot, Landing = spot, Name = floor.Name, Yaw = FacingAway(center, spot) };
+            float yaw = FacingAway(center, spot);
+            AgainstWall(ref spot, ref yaw);
+            return new Pad { Position = spot, Landing = spot, Name = floor.Name, Yaw = yaw };
         }
 
         // The Museum elevator room has a sub floor 8 m down that the shaft used to drop you into. With
@@ -414,6 +422,18 @@ namespace Upstairs.Services
                 Stop = true
             };
             pads.Add(sub);
+        }
+
+        // The car stands just outside the opened wall, doors facing into the room, and the landing
+        // is the floor right inside the opening.
+        private static Pad Doorway(Module module, string name)
+        {
+            Vector3 dir = Session.SideDirection(Session.LiftSide);
+            Vector3 center = module.transform.position;
+            float half = LevelGenerator.ModuleWidth * LevelGenerator.TileSize * 0.5f;
+            Vector3 dock = center + dir * (half + 1.55f);
+            Vector3 landing = OnNavMesh(center + dir * (half - 1.2f), 2f);
+            return new Pad { Position = dock, Landing = landing, Name = name, Yaw = Quaternion.LookRotation(dir).eulerAngles.y };
         }
 
         // Where the room's own elevator car sits, at the room's floor level, turned the way the car is.
@@ -461,6 +481,35 @@ namespace Upstairs.Services
                 }
             }
             return best < float.MaxValue;
+        }
+
+        // A car in the middle of a room looks dropped there. Slide it back to the nearest wall within
+        // reach, doors toward the room, as long as the floor there is still walkable.
+        private static void AgainstWall(ref Vector3 spot, ref float yaw)
+        {
+            int mask = LayerMask.GetMask("Default");
+            Vector3 eye = spot + Vector3.up * 1.2f;
+            float best = 7f;
+            Vector3 hitPoint = Vector3.zero;
+            Vector3 normal = Vector3.zero;
+            for (int i = 0; i < 16; i++)
+            {
+                Vector3 dir = Quaternion.Euler(0f, 22.5f * i, 0f) * Vector3.forward;
+                if (Physics.Raycast(eye, dir, out RaycastHit hit, best, mask, QueryTriggerInteraction.Ignore) && Mathf.Abs(hit.normal.y) < 0.3f)
+                {
+                    best = hit.distance;
+                    hitPoint = hit.point;
+                    normal = hit.normal;
+                }
+            }
+            if (normal == Vector3.zero)
+                return;
+            Vector3 flat = new Vector3(normal.x, 0f, normal.z).normalized;
+            Vector3 back = new Vector3(hitPoint.x, spot.y, hitPoint.z) + flat * 1.7f;
+            if (!NavMesh.SamplePosition(back, out NavMeshHit onFloor, 1f, NavMesh.AllAreas) || Mathf.Abs(onFloor.position.y - spot.y) > 0.5f)
+                return;
+            spot = new Vector3(back.x, onFloor.position.y, back.z);
+            yaw = Quaternion.LookRotation(-flat).eulerAngles.y;
         }
 
         // The car's doors are on its back, so a car turned away from the room opens toward it.

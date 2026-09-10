@@ -188,10 +188,15 @@ namespace UpstairsProbe
         // Stand in the car, press up, get carried; then press down, get carried back; then the void check.
         private IEnumerator ElevatorRides(string name, PlayerAvatar me, Vector3 ground, Vector3 up)
         {
-            Place(me, ground + Vector3.up * 0.2f);
-            yield return new WaitForSecondsRealtime(1f);
+            Place(me, ground + Vector3.up * 0.6f);
+            yield return new WaitForSecondsRealtime(1.5f);
+            if (!Elevator.IsInside(me.transform.position))
+            {
+                Place(me, ground + Vector3.up * 0.6f);
+                yield return new WaitForSecondsRealtime(1.5f);
+            }
             int upDock = DockNamed("upstairs");
-            log.LogInfo($"[Probe] {name} pressing up (dock {upDock}), inside={Elevator.IsInside(me.transform.position)}");
+            log.LogInfo($"[Probe] {name} pressing up (dock {upDock}), inside={Elevator.IsInside(me.transform.position)} at={me.transform.position} dock={ground}");
             UpstairsNet.RequestRide(upDock);
             float waited = 0f;
             while (Elevator.Moving && waited < 30f) { yield return new WaitForSecondsRealtime(0.5f); waited += 0.5f; }

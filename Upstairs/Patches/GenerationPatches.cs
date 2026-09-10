@@ -1,5 +1,6 @@
 using System.Collections;
 using HarmonyLib;
+using UnityEngine;
 using Upstairs.Services;
 
 namespace Upstairs.Patches
@@ -70,6 +71,23 @@ namespace Upstairs.Patches
             {
                 lg.waitingForSubCoroutine = false;
             }
+        }
+    }
+
+    // Mods that fill the block object slot (Deadstock does) get a blocked door on every wall with
+    // no neighbour, which would board up the elevator's wall. That one spot stays open.
+    [HarmonyPatch(typeof(LevelGenerator), "SpawnBlockObject")]
+    internal static class SpawnBlockObjectPatch
+    {
+        private static bool Prefix(Vector3 position)
+        {
+            if (!Session.Active || Session.LiftSide < 0)
+                return true;
+            Vector3 wall = Session.LiftWallCenter();
+            if (Vector3.Distance(new Vector3(position.x, 0f, position.z), new Vector3(wall.x, 0f, wall.z)) > 1f)
+                return true;
+            Plugin.LogInfo("[Plan] kept the elevator wall free of a block object");
+            return false;
         }
     }
 

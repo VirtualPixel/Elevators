@@ -73,6 +73,9 @@ namespace Upstairs.UI
             float rise = flat.y;
             flat.y = 0f;
             float distance = flat.magnitude;
+            string look = Elevator.LookingAt();
+            if (look.Length > 0)
+                return look == "call" ? "ELEVATOR  grab to call it" : look.EndsWith("hatch") ? $"ELEVATOR  grab to {look}" : $"ELEVATOR  grab: {look}";
             switch (Elevator.LocalStatus())
             {
                 case "riding":
@@ -80,7 +83,7 @@ namespace Upstairs.UI
                 case "moving":
                     return "ELEVATOR  on its way";
                 case "inside":
-                    return "ELEVATOR  grab a button";
+                    return "ELEVATOR  buttons on the wall by the door";
             }
             if (distance < HideWithin && Mathf.Abs(rise) < 2f)
                 return Elevator.Built ? "ELEVATOR  call it with the button" : "LIFT  stand still";
