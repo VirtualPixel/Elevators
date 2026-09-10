@@ -77,6 +77,7 @@ namespace Upstairs.Services
         private static bool localRiding;
         private static AudioSource? hum;
         private static Rigidbody? body;
+        private static readonly List<Collider> riderColliders = new List<Collider>();
 
         public static bool Built => car != null;
         public static bool Moving => toDock >= 0;
@@ -92,6 +93,7 @@ namespace Upstairs.Services
                 if (g.name == "Upstairs dock" || g.name == "Upstairs shaft")
                     Object.Destroy(g);
             }
+            RiderCollision(true);
             car = null;
             doorL = doorR = null;
             hum = null;
@@ -399,6 +401,8 @@ namespace Upstairs.Services
             atDock = -1;
             lastCarPos = root.position;
             localRiding = LocalInside();
+            if (localRiding)
+                RiderCollision(false);
             Play(sounds?.soundActivate1, root.position);
             if (hum != null)
                 hum.Play();
@@ -460,7 +464,12 @@ namespace Upstairs.Services
             body.MovePosition(next);
             Vector3 delta = next - before;
             if (localRiding)
+            {
+                // The game switches the avatar's collider back on every frame, so it goes off again
+                // right before each physics step for as long as the ride lasts.
+                RiderCollision(false);
                 Carry(delta, next.y - FloorOffset, delta.y / dt);
+            }
             lastCarPos = next;
             if (travelT >= 1f)
             {
@@ -469,7 +478,34 @@ namespace Upstairs.Services
                 doorsHeld = false;
                 if (hum != null)
                     hum.Stop();
+                RiderCollision(true);
                 Play(sounds?.soundActivate3, next);
+            }
+        }
+
+        // Outside a real shaft the trip passes through whatever roof or floor sits in the way. The
+        // rider's own colliders come off for the ride, since the car floor snap is what holds them.
+        private static void RiderCollision(bool on)
+        {
+            if (on)
+            {
+                foreach (Collider c in riderColliders)
+                    if (c) c.enabled = true;
+                riderColliders.Clear();
+                return;
+            }
+            foreach (Component? root in new Component?[] { PlayerController.instance, PlayerAvatar.instance })
+            {
+                if (root == null)
+                    continue;
+                foreach (Collider c in root.GetComponentsInChildren<Collider>())
+                {
+                    if (c.isTrigger)
+                        continue;
+                    if (!riderColliders.Contains(c))
+                        riderColliders.Add(c);
+                    c.enabled = false;
+                }
             }
         }
 

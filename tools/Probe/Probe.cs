@@ -209,8 +209,9 @@ namespace UpstairsProbe
                 Place(me, new Vector3(from.x, roofY + 4f, from.z));
                 yield return new WaitForSecondsRealtime(6f);
                 bool inRoom = Physics.CheckSphere(me.transform.position + Vector3.up * 0.6f, 0.25f, LayerMask.GetMask("RoomVolume"), QueryTriggerInteraction.Collide);
-                if (inRoom)
-                    log.LogInfo($"[Probe] {name} VOID RESCUE n/a, the drop landed inside a room at {me.transform.position}");
+                bool onNav = UnityEngine.AI.NavMesh.SamplePosition(me.transform.position, out UnityEngine.AI.NavMeshHit navHit, 1.2f, UnityEngine.AI.NavMesh.AllAreas) && Mathf.Abs(navHit.position.y - me.transform.position.y) < 1.2f;
+                if (inRoom || onNav)
+                    log.LogInfo($"[Probe] {name} VOID RESCUE n/a, the drop landed on level floor at {me.transform.position}");
                 else
                     Verdict(name, "VOID RESCUE", me.transform.position, ground);
             }
