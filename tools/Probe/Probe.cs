@@ -87,6 +87,7 @@ namespace UpstairsProbe
                     continue;
                 }
                 Report(levelName);
+                OpeningScan(levelName);
                 yield return MapCheck(levelName);
                 yield return Rides(levelName);
             }
@@ -131,6 +132,59 @@ namespace UpstairsProbe
                     log.LogInfo($"[Probe] {name} pad {pad} onNavMesh={onNav} navDist={(onNav ? hit.distance : -1f):0.00}");
                 }
             }
+        }
+
+        // Doorways on the new floors that lead to nothing, and dock landings with a way out or
+        // no floor: the holes a player falls through.
+        private void OpeningScan(string name)
+        {
+            int rooms = LayerMask.GetMask("RoomVolume");
+            int found = 0;
+            foreach (ModuleConnectObject door in Object.FindObjectsOfType<ModuleConnectObject>())
+            {
+                float y = door.transform.position.y;
+                if (y <= Session.GroundTop && y >= Session.GroundBottom) continue;
+                Vector3 origin = door.transform.position + Vector3.up * 1.2f;
+                foreach (Vector3 dir in new[] { door.transform.forward, -door.transform.forward })
+                {
+                    Vector3 beyond = origin + dir * 2.5f;
+                    bool room = Physics.CheckSphere(beyond, 0.3f, rooms, QueryTriggerInteraction.Collide);
+                    bool blocked = Physics.Raycast(origin, dir, 2.5f, ~0, QueryTriggerInteraction.Ignore);
+                    if (!room && !blocked)
+                    {
+                        found++;
+                        log.LogWarning($"[Probe] {name} OPEN DOORWAY at {door.transform.position} toward {dir} ({door.name})");
+                    }
+                }
+            }
+            foreach ((Vector3 pos, float yaw, string dock) in Elevator.DockList())
+            {
+                Vector3 landing = pos + Quaternion.Euler(0f, yaw, 0f) * new Vector3(0f, 0f, -2.5f);
+                for (int i = 0; i < 8; i++)
+                {
+                    Vector3 dir = Quaternion.Euler(0f, 45f * i, 0f) * Vector3.forward;
+                    foreach (float h in new[] { 0.6f, 1.5f })
+                    {
+                        Vector3 origin = landing + Vector3.up * h;
+                        if (Physics.Raycast(origin, dir, 5f, ~0, QueryTriggerInteraction.Ignore)) continue;
+                        Vector3 end = origin + dir * 5f;
+                        if (Physics.CheckSphere(end, 0.3f, rooms, QueryTriggerInteraction.Collide)) continue;
+                        found++;
+                        log.LogWarning($"[Probe] {name} OPEN at dock {dock} from {landing} dir {i * 45} h {h}");
+                    }
+                }
+                for (int gx = -1; gx <= 1; gx++)
+                for (int gz = -1; gz <= 1; gz++)
+                {
+                    Vector3 spot = landing + new Vector3(gx, 0.5f, gz);
+                    if (!Physics.Raycast(spot, Vector3.down, 1.5f, ~0, QueryTriggerInteraction.Ignore))
+                    {
+                        found++;
+                        log.LogWarning($"[Probe] {name} NO FLOOR near dock {dock} at {spot}");
+                    }
+                }
+            }
+            log.LogInfo($"[Probe] {name} opening scan: {found} finding(s)");
         }
 
         // Open the map through its debug switch, step through the floors the way the wheel would,

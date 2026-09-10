@@ -114,6 +114,7 @@ namespace Upstairs.Services
             public Vector3 LandingClosedL;
             public Vector3 LandingClosedR;
             public float LandingOpen;
+            public bool InShaft;
         }
 
         private static readonly List<Dock> docks = new List<Dock>();
@@ -135,6 +136,9 @@ namespace Upstairs.Services
         private static Vector3 travelFrom;
         private static Vector3 travelTo;
         private static float doorWait;
+        private static float landWait;
+        private const float LandPause = 0.9f;
+        private static Sound? landThud;
         private static Vector3 lastCarPos;
         private static bool localRiding;
         private static AudioSource? hum;
@@ -374,7 +378,7 @@ namespace Upstairs.Services
         public static void Grabbed(StaticGrabObject grab, PhysGrabber player)
         {
             LiftButton button = grab.GetComponent<LiftButton>();
-            if (button == null || player == null || player.photonView == null || !player.photonView.IsMine)
+            if (button == null || player == null || !player.isLocal)
                 return;
             Plugin.LogInfo($"[Elevator] grabbed {button.Kind} (dock {button.Dock})");
             Press(button);
@@ -389,7 +393,11 @@ namespace Upstairs.Services
                 return;
             int grabberView = grabber != null && grabber.photonView != null ? grabber.photonView.ViewID : -1;
             Plugin.LogInfo($"[Elevator] grab area press {button.Kind} (dock {button.Dock})");
-            UpstairsNet.SendPress(button.GetComponent<PhotonView>()?.ViewID ?? -1, grabberView);
+            // Offline the buttons carry no network id, so the host presses its own copy here and
+            // only the other clients are told which one.
+            Press(button);
+            if (SemiFunc.IsMultiplayer())
+                UpstairsNet.SendPress(button.GetComponent<PhotonView>()?.ViewID ?? -1, grabberView);
             Ride(button);
         }
 
@@ -487,6 +495,7 @@ namespace Upstairs.Services
             doorL = doorR = null;
             hum = null;
             humLoop = null;
+            landWait = 0f;
             hatch = null;
             hatchOpen = 0f;
             hatchWantOpen = false;
@@ -714,8 +723,12 @@ namespace Upstairs.Services
                 landing.transform.SetPositionAndRotation(dock.Position + Vector3.up * FloorOffset, Quaternion.Euler(0f, dock.Yaw, 0f));
                 dock.LandingL = CopyDoor(carriage, "Museum Elevator door (1)", landing.transform);
                 dock.LandingR = CopyDoor(carriage, "Museum Elevator door", landing.transform);
-                if (dock.LandingL != null) { dock.LandingClosedL = ClosedAt(dock.LandingL, left: true) + Vector3.back * 0.18f; dock.LandingL.localPosition = dock.LandingClosedL; }
-                if (dock.LandingR != null) { dock.LandingClosedR = ClosedAt(dock.LandingR, left: false) + Vector3.back * 0.18f; dock.LandingR.localPosition = dock.LandingClosedR; }
+                // A hair in front of the car's own doors so the two pairs never share a plane, but
+                // still inside the wall, so an open door slides behind the frame and not across
+                // the wall plate and its button.
+                if (dock.LandingL != null) { dock.LandingClosedL = ClosedAt(dock.LandingL, left: true) + Vector3.back * 0.05f; dock.LandingL.localPosition = dock.LandingClosedL; }
+                if (dock.LandingR != null) { dock.LandingClosedR = ClosedAt(dock.LandingR, left: false) + Vector3.back * 0.05f; dock.LandingR.localPosition = dock.LandingClosedR; }
+                dock.InShaft = true;
                 carriage.gameObject.SetActive(false);
                 Plugin.LogInfo($"[Elevator] {dock.Name} dock is inside the room's own shaft");
                 return;
@@ -766,12 +779,26 @@ namespace Upstairs.Services
             return at;
         }
 
+        // Where the Museum hangs its elevator plate: beside the doors, at eye height, on the wall.
+        private static readonly Vector3 MuseumPlate = new Vector3(1.936f, 1.75f, -1.59f);
+
         private static void BuildCallButton(int index)
         {
             Dock dock = docks[index];
+            Quaternion facing = Quaternion.Euler(0f, dock.Yaw, 0f);
+            if (dock.InShaft)
+            {
+                // The room already has a plate on the wall; the button goes on it.
+                var mount = new GameObject("Upstairs dock");
+                mount.transform.SetPositionAndRotation(dock.Position + facing * MuseumPlate, facing);
+                var face = new GameObject("face").transform;
+                face.SetParent(mount.transform, false);
+                face.localRotation = Quaternion.Euler(0f, 180f, 0f);
+                AddSlot(face, new Vector3(0f, 0f, 0.03f), ButtonKind.Call, index, "CALL");
+                return;
+            }
             // An unscaled stand holds the post cube and the panel, so the panel keeps its shape.
             var stand = new GameObject("Upstairs dock");
-            Quaternion facing = Quaternion.Euler(0f, dock.Yaw, 0f);
             stand.transform.SetPositionAndRotation(dock.Position + facing * new Vector3(1.9f, 0f, -1.6f), facing);
             var post = GameObject.CreatePrimitive(PrimitiveType.Cube);
             post.name = "post";
@@ -955,6 +982,7 @@ namespace Upstairs.Services
                             if (!audio.name.Contains("Arctic") && !audio.name.Contains("Container"))
                                 continue;
                             motorClip = audio.moveLoop.Sounds[0];
+                            landThud = audio.CloseHeavy;
                             Plugin.LogInfo($"[Elevator] motor loop from {audio.name}: {motorClip.name}");
                             return motorClip;
                         }
@@ -1054,6 +1082,12 @@ namespace Upstairs.Services
                 }
             }
 
+            if (landWait > 0f)
+            {
+                landWait -= dt;
+                if (landWait <= 0f)
+                    doorsHeld = false;
+            }
             float target = doorsHeld ? 0f : (AnyoneNear(root.position) ? 1f : 0f);
             float open = Mathf.MoveTowards(doorOpen, target, dt * 2f);
             if (open != doorOpen)
@@ -1112,8 +1146,11 @@ namespace Upstairs.Services
             {
                 atDock = toDock;
                 toDock = -1;
-                doorsHeld = false;
+                // The car settles with a thud and a shudder, and the doors wait a beat.
+                landWait = LandPause;
+                Play(landThud, next);
                 Play(sounds?.soundActivate3, next);
+                SemiFunc.CameraShakeImpactDistance(next, 3f, 0.2f, 4f, 18f);
                 // The whole building hears an elevator land.
                 EnemyDirector.instance?.SetInvestigate(next, 20f);
             }
@@ -1329,6 +1366,14 @@ namespace Upstairs.Services
                 ButtonKind.Hatch => hatchRef != null ? "swing the hatch" : hatchWantOpen ? "close the hatch" : "open the hatch",
                 _ => "call"
             };
+        }
+
+        internal static List<(Vector3 pos, float yaw, string name)> DockList()
+        {
+            var list = new List<(Vector3, float, string)>();
+            foreach (Dock d in docks)
+                list.Add((d.Position, d.Yaw, d.Name));
+            return list;
         }
 
         internal static string HumStatus() => hum == null ? "no hum" : $"playing={hum.isPlaying} vol={hum.volume:0.00} clip={(hum.clip != null ? hum.clip.name : "none")} group={(hum.outputAudioMixerGroup != null ? hum.outputAudioMixerGroup.name : "none")} active={hum.gameObject.activeInHierarchy}";
