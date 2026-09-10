@@ -133,7 +133,8 @@ namespace Upstairs.Services
             if (UpPlan != null)
             {
                 Up = new Floor(UpPlan, above: true);
-                IEnumerator build = FloorBuilder.Build(lg, Up, GroundTop, GroundBottom, avoid);
+                SpanUnder(UpPlan, out float top, out float bottom);
+                IEnumerator build = FloorBuilder.Build(lg, Up, top, bottom, avoid);
                 while (build.MoveNext())
                     yield return build.Current;
                 if (Up.Modules.Count == 0)
@@ -142,7 +143,8 @@ namespace Upstairs.Services
             if (DownPlan != null)
             {
                 Down = new Floor(DownPlan, above: false);
-                IEnumerator build = FloorBuilder.Build(lg, Down, GroundTop, GroundBottom, avoid);
+                SpanUnder(DownPlan, out float top, out float bottom);
+                IEnumerator build = FloorBuilder.Build(lg, Down, top, bottom, avoid);
                 while (build.MoveNext())
                     yield return build.Current;
                 if (Down.Modules.Count == 0)
@@ -170,6 +172,28 @@ namespace Upstairs.Services
                     return module;
             }
             return null;
+        }
+
+        // The gap only has to clear the ground rooms a floor actually sits on, not the tallest room
+        // anywhere in the level. Cuts the climb by half on most seeds.
+        private static void SpanUnder(FloorPlan plan, out float top, out float bottom)
+        {
+            top = float.MinValue;
+            bottom = float.MaxValue;
+            foreach (Module module in Object.FindObjectsOfType<Module>())
+            {
+                if (module.StartRoom || Mathf.Abs(module.transform.position.y) > 0.5f || plan.At(module.GridX, module.GridY) == null)
+                    continue;
+                if (!ModuleExtents.TryMeasure(module.gameObject, out float b, out float t))
+                    continue;
+                if (t > top) top = t;
+                if (b < bottom) bottom = b;
+            }
+            if (top == float.MinValue)
+            {
+                top = GroundTop;
+                bottom = GroundBottom;
+            }
         }
 
         private static void MeasureGround()
