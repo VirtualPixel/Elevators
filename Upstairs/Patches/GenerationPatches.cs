@@ -13,6 +13,8 @@ namespace Upstairs.Patches
             Session.Reset();
             LiftService.Instance?.Clear();
             UpstairsNet.ResetApplied();
+            if (RunManager.instance != null)
+                Elevator.EnsureButtonPrefab();
         }
     }
 

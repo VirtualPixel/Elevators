@@ -267,6 +267,34 @@ namespace Upstairs.Services
             return parts.Count == 0 ? "no pads" : string.Join(" | ", parts);
         }
 
+        // Floors as the map sees them: one entry per distinct pad height, lowest first.
+        private List<(int layer, string name)> Floors()
+        {
+            var floors = new List<(int layer, string name)>();
+            foreach (Pad pad in pads)
+            {
+                int layer = Mathf.FloorToInt((pad.Position.y + 0.1f) / 4f);
+                if (!floors.Exists(f => f.layer == layer))
+                    floors.Add((layer, pad.Name));
+            }
+            floors.Sort((a, b) => a.layer.CompareTo(b.layer));
+            return floors;
+        }
+
+        internal int FloorCount => Floors().Count;
+        internal int FloorLayer(int index) => Floors()[Mathf.Clamp(index, 0, Floors().Count - 1)].layer;
+        internal string FloorName(int index) => Floors()[Mathf.Clamp(index, 0, Floors().Count - 1)].name;
+
+        internal int FloorIndexOfLayer(int layer)
+        {
+            List<(int layer, string name)> floors = Floors();
+            int best = 0;
+            for (int i = 0; i < floors.Count; i++)
+                if (Mathf.Abs(floors[i].layer - layer) < Mathf.Abs(floors[best].layer - layer))
+                    best = i;
+            return best;
+        }
+
         // Nearest pad on the caller's own floor, else the nearest one anywhere.
         internal bool NearestPad(Vector3 from, float sameFloor, out Vector3 position, out string name)
         {

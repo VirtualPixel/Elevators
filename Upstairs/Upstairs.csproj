@@ -69,6 +69,11 @@
       <HintPath>$(RepoManagedDir)/Unity.TextMeshPro.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- REPOLib registers the elevator button as a network prefab. Runtime dependency; compile against the profile copy. -->
+    <Reference Include="REPOLib">
+      <HintPath>$(GalePluginsDir)/Zehs-REPOLib/REPOLib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <Target Name="GenerateBuildInfo" BeforeTargets="CoreCompile">

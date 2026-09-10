@@ -9,6 +9,7 @@ using Upstairs.UI;
 namespace Upstairs
 {
     [BepInPlugin("Vippy.Upstairs", "Upstairs", BuildInfo.Version)]
+    [BepInDependency("REPOLib", BepInDependency.DependencyFlags.HardDependency)]
     public class Plugin : BaseUnityPlugin
     {
         internal static Plugin Instance { get; private set; } = null!;

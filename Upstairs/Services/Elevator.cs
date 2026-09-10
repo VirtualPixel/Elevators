@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using Photon.Pun;
+using REPOLib.Modules;
 using UnityEngine;
 using Upstairs.UI;
 using Upstairs.Configuration;
@@ -35,11 +37,38 @@ namespace Upstairs.Services
         }
 
         // A pressable thing. Carries which dock it calls the car to, or which way to go from inside.
-        internal sealed class LiftButton : MonoBehaviour
+        // The real buttons are network objects the host spawns; each one arrives with its kind and dock
+        // and clips itself onto the matching slot of the car or a dock post.
+        internal sealed class LiftButton : MonoBehaviour, IPunInstantiateMagicCallback
         {
             public ButtonKind Kind;
             public int Dock;
+            public bool Attached;
+
+            public void OnPhotonInstantiate(PhotonMessageInfo info)
+            {
+                object[] data = info.photonView.InstantiationData;
+                if (data == null || data.Length < 2)
+                    return;
+                Kind = (ButtonKind)(int)data[0];
+                Dock = (int)data[1];
+                Attach(this);
+            }
         }
+
+        private sealed class Slot
+        {
+            public Transform Anchor = null!;
+            public ButtonKind Kind;
+            public int Dock;
+        }
+
+        private static readonly List<Slot> slots = new List<Slot>();
+        private static readonly List<LiftButton> loose = new List<LiftButton>();
+        private static GameObject? buttonTemplate;
+        private static PrefabRef? buttonRef;
+        private const string ButtonPrefabId = "UpstairsButton";
+        private const string ButtonMeshName = "Museum Elevator Button";
 
         private sealed class Dock
         {
@@ -89,8 +118,131 @@ namespace Upstairs.Services
         public static int CurrentDock => atDock;
         public static int DockCount => docks.Count;
 
+        // The button every client can grab: the Museum's wall plate with the game's own
+        // StaticGrabObject and a PhotonView, registered with REPOLib so the host can spawn it as a
+        // room object and the grabber treats it like the extraction button. Built once per session.
+        public static void EnsureButtonPrefab()
+        {
+            if (buttonTemplate != null)
+                return;
+            var template = new GameObject(ButtonPrefabId);
+            template.SetActive(false);
+            Object.DontDestroyOnLoad(template);
+            int layer = LayerMask.NameToLayer("StaticGrabObject");
+            GameObject? plate = FindAsset(ButtonMeshName);
+            Vector3 size = new Vector3(0.3f, 0.3f, 0.1f);
+            if (plate != null)
+            {
+                GameObject mesh = Object.Instantiate(plate, template.transform);
+                StripScripts(mesh);
+                mesh.transform.localPosition = Vector3.zero;
+                // The plate faces -x where the Museum hangs it; turned so it faces the template's +z.
+                mesh.transform.localRotation = Quaternion.Euler(0f, 90f, 0f);
+                MeshFilter filter = mesh.GetComponent<MeshFilter>();
+                if (filter != null && filter.sharedMesh != null)
+                {
+                    Bounds b = filter.sharedMesh.bounds;
+                    size = new Vector3(b.size.z + 0.04f, b.size.y + 0.04f, Mathf.Max(0.08f, b.size.x + 0.04f));
+                }
+                foreach (Transform t in mesh.GetComponentsInChildren<Transform>(true))
+                    t.gameObject.layer = layer;
+            }
+            else
+            {
+                var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                Object.Destroy(cube.GetComponent<Collider>());
+                cube.transform.SetParent(template.transform, false);
+                cube.transform.localScale = new Vector3(0.25f, 0.25f, 0.05f);
+                cube.layer = layer;
+            }
+            template.layer = layer;
+            var box = template.AddComponent<BoxCollider>();
+            box.size = size;
+            var grab = template.AddComponent<StaticGrabObject>();
+            grab.colliderTransform = template.transform;
+            grab.uiPosition = template.transform;
+            grab.hoverText = "Elevator";
+            template.AddComponent<PhotonView>();
+            template.AddComponent<LiftButton>();
+            buttonTemplate = template;
+            buttonRef = NetworkPrefabs.RegisterNetworkPrefab(ButtonPrefabId, template);
+            Plugin.LogInfo($"[Elevator] button prefab registered ({(plate != null ? "Museum plate" : "plain plate")}), ref {(buttonRef != null ? "ok" : "MISSING")}");
+        }
+
+        // A spawned button finds its slot; before the car exists it waits.
+        private static void Attach(LiftButton button)
+        {
+            if (button == null || button.Attached)
+                return;
+            foreach (Slot slot in slots)
+            {
+                if (slot.Kind != button.Kind || slot.Dock != button.Dock)
+                    continue;
+                button.transform.SetParent(slot.Anchor, false);
+                button.transform.localPosition = Vector3.zero;
+                button.transform.localRotation = Quaternion.identity;
+                button.Attached = true;
+                StaticGrabObject grab = button.GetComponent<StaticGrabObject>();
+                if (grab != null)
+                    grab.hoverText = button.Kind switch { ButtonKind.Up => "Up", ButtonKind.Down => "Down", _ => "Call the elevator" };
+                loose.Remove(button);
+                return;
+            }
+            if (!loose.Contains(button))
+                loose.Add(button);
+        }
+
+        // Host only: one network button per slot.
+        private static void SpawnButtons()
+        {
+            if (!SemiFunc.IsMasterClientOrSingleplayer() || buttonRef == null)
+                return;
+            int spawned = 0;
+            foreach (Slot slot in slots)
+            {
+                GameObject? go = NetworkPrefabs.SpawnNetworkPrefab(buttonRef, slot.Anchor.position, slot.Anchor.rotation, 0, new object[] { (int)slot.Kind, slot.Dock });
+                if (go == null)
+                    continue;
+                LiftButton button = go.GetComponent<LiftButton>();
+                button.Kind = slot.Kind;
+                button.Dock = slot.Dock;
+                Attach(button);
+                spawned++;
+            }
+            Plugin.LogInfo($"[Elevator] {spawned} grabbable buttons spawned");
+        }
+
+        // Called from the grabber's own client the moment it takes hold of a button.
+        public static void Grabbed(StaticGrabObject grab, PhysGrabber player)
+        {
+            LiftButton button = grab.GetComponent<LiftButton>();
+            if (button == null || player == null || player.photonView == null || !player.photonView.IsMine)
+                return;
+            Play(sounds?.soundButton, grab.transform.position);
+            Plugin.Instance.StartCoroutine(Squash(grab.transform));
+            int target = button.Kind switch
+            {
+                ButtonKind.Call => button.Dock,
+                ButtonKind.Up => Neighbour(above: true),
+                _ => Neighbour(above: false)
+            };
+            if (target >= 0)
+                UpstairsNet.RequestRide(target);
+        }
+
+        private static System.Collections.IEnumerator Squash(Transform plate)
+        {
+            Vector3 rest = plate.localScale;
+            plate.localScale = new Vector3(rest.x, rest.y, rest.z * 0.4f);
+            yield return new WaitForSeconds(0.15f);
+            if (plate != null)
+                plate.localScale = rest;
+        }
+
         public static void Clear()
         {
+            slots.Clear();
+            loose.Clear();
             if (car != null)
                 Object.Destroy(car.transform.parent != null ? car.transform.parent.gameObject : car);
             foreach (GameObject g in GameObject.FindGameObjectsWithTag("Untagged"))
@@ -143,6 +295,9 @@ namespace Upstairs.Services
                 Plugin.LogInfo($"[Elevator] under the {docks[i].Name} dock: {under}");
             }
             BuildShaft();
+            foreach (LiftButton waiting in loose.ToArray())
+                Attach(waiting);
+            SpawnButtons();
             Plugin.LogInfo($"[Elevator] car at {docks[ground].Name}, {docks.Count} docks");
         }
 
@@ -224,9 +379,9 @@ namespace Upstairs.Services
             float wallX = cage != null && cage.sharedMesh != null ? cage.sharedMesh.bounds.extents.x - 0.1f : 1.05f;
             cageHalfWidth = wallX + 0.1f;
             // The panel's forward points into the car; buttons and labels stand proud of the plate along it.
-            Transform panel = Panel(body.transform, new Vector3(wallX - 0.02f, -0.5f, -0.6f), Quaternion.LookRotation(Vector3.left), 0.5f);
-            AddButton(panel, new Vector3(0f, 0.12f, 0.035f), ButtonKind.Up, -1, "UP");
-            AddButton(panel, new Vector3(0f, -0.12f, 0.035f), ButtonKind.Down, -1, "DOWN");
+            Transform panel = Panel(body.transform, new Vector3(wallX - 0.02f, -0.5f, -0.6f), Quaternion.LookRotation(Vector3.left), 0.7f);
+            AddSlot(panel, new Vector3(0f, 0.17f, 0.02f), ButtonKind.Up, -1, "UP");
+            AddSlot(panel, new Vector3(0f, -0.17f, 0.02f), ButtonKind.Down, -1, "DOWN");
             var panelLight = new GameObject("panel light").AddComponent<Light>();
             panelLight.transform.SetParent(body.transform, false);
             panelLight.transform.localPosition = new Vector3(wallX - 0.35f, -0.4f, -0.6f);
@@ -348,19 +503,23 @@ namespace Upstairs.Services
         private static void BuildCallButton(int index)
         {
             Dock dock = docks[index];
-            var post = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            post.name = "Upstairs dock";
-            post.transform.localScale = new Vector3(0.12f, 1.2f, 0.12f);
+            // An unscaled stand holds the post cube and the panel, so the panel keeps its shape.
+            var stand = new GameObject("Upstairs dock");
             Quaternion facing = Quaternion.Euler(0f, dock.Yaw, 0f);
-            post.transform.SetPositionAndRotation(dock.Position + facing * new Vector3(1.9f, 0.6f, -1.6f), facing);
+            stand.transform.SetPositionAndRotation(dock.Position + facing * new Vector3(1.9f, 0f, -1.6f), facing);
+            var post = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            post.name = "post";
+            post.transform.SetParent(stand.transform, false);
+            post.transform.localPosition = new Vector3(0f, 0.6f, 0f);
+            post.transform.localScale = new Vector3(0.12f, 1.2f, 0.12f);
             Renderer carRenderer = car!.GetComponent<Renderer>();
             if (carRenderer != null)
                 post.GetComponent<Renderer>().sharedMaterial = carRenderer.sharedMaterial;
             // Faces the room, which is the car's -z.
-            Transform plate = Panel(post.transform, new Vector3(0f, 0.5f, -0.6f), Quaternion.Euler(0f, 180f, 0f), 0.3f);
-            AddButton(plate, new Vector3(0f, 0f, 0.035f), ButtonKind.Call, index, "CALL");
+            Transform plate = Panel(stand.transform, new Vector3(0f, 1.1f, -0.08f), Quaternion.Euler(0f, 180f, 0f), 0.36f);
+            AddSlot(plate, new Vector3(0f, 0.02f, 0.02f), ButtonKind.Call, index, "CALL");
             var glow = new GameObject("call light").AddComponent<Light>();
-            glow.transform.SetParent(post.transform, false);
+            glow.transform.SetParent(stand.transform, false);
             glow.transform.localPosition = new Vector3(0f, 0.6f, -1.2f);
             glow.type = LightType.Point;
             glow.color = new Color(1f, 0.75f, 0.45f);
@@ -370,7 +529,6 @@ namespace Upstairs.Services
         }
 
         private static Material? plateMaterial;
-        private static Material? buttonMaterial;
 
         // A dark plate with round lit buttons and a word under each, the way an elevator panel reads.
         private static Transform Panel(Transform parent, Vector3 localPos, Quaternion localRot, float height)
@@ -391,26 +549,17 @@ namespace Upstairs.Services
             return holder;
         }
 
-        private static void AddButton(Transform panel, Vector3 localPos, ButtonKind kind, int dock, string label)
+        // Where a network button will sit once the host spawns it, with its word underneath.
+        private static void AddSlot(Transform panel, Vector3 localPos, ButtonKind kind, int dock, string label)
         {
-            buttonMaterial ??= new Material(Shader.Find("Sprites/Default")) { color = new Color(1f, 0.82f, 0.45f) };
-            var button = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-            button.name = "Upstairs button " + kind;
-            button.transform.SetParent(panel, false);
-            button.transform.localPosition = localPos;
-            button.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
-            button.transform.localScale = new Vector3(0.14f, 0.03f, 0.14f);
-            button.GetComponent<Renderer>().sharedMaterial = buttonMaterial;
-            Collider round = button.GetComponent<Collider>();
-            Object.Destroy(round);
-            var box = button.AddComponent<BoxCollider>();
-            box.size = new Vector3(2.2f, 2.2f, 2.2f);
-            var lift = button.AddComponent<LiftButton>();
-            lift.Kind = kind;
-            lift.Dock = dock;
+            var anchor = new GameObject("slot " + kind).transform;
+            anchor.SetParent(panel, false);
+            anchor.localPosition = localPos;
+            anchor.localRotation = Quaternion.identity;
+            slots.Add(new Slot { Anchor = anchor, Kind = kind, Dock = dock });
 
             Transform text = NativeText.CreateWorld(panel, label, 0.22f);
-            text.localPosition = localPos + new Vector3(0f, -0.1f, 0f);
+            text.localPosition = localPos + new Vector3(0f, -0.17f, 0f);
             text.localRotation = Quaternion.Euler(0f, 180f, 0f);
         }
 
@@ -734,24 +883,10 @@ namespace Upstairs.Services
             if (cam == null || !Physics.Raycast(cam.transform.position, cam.transform.forward, out RaycastHit hit, 2.6f))
                 return;
             LiftButton button = hit.collider.GetComponentInParent<LiftButton>();
-            if (button == null)
+            if (button == null || button.Kind != ButtonKind.Hatch)
                 return;
-            if (button.Kind == ButtonKind.Hatch)
-            {
-                hatchWantOpen = !hatchWantOpen;
-                Play(sounds?.soundActivate2, hit.point);
-                return;
-            }
-            int target = button.Kind switch
-            {
-                ButtonKind.Call => button.Dock,
-                ButtonKind.Up => Neighbour(above: true),
-                _ => Neighbour(above: false)
-            };
-            if (target < 0)
-                return;
-            Play(sounds?.soundButton, hit.point);
-            UpstairsNet.RequestRide(target);
+            hatchWantOpen = !hatchWantOpen;
+            Play(sounds?.soundActivate2, hit.point);
         }
 
         private static int Neighbour(bool above)
