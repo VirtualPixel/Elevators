@@ -566,6 +566,7 @@ namespace Upstairs.Services
             openHold = 0f;
             queued = -1;
             pursuers.Clear();
+            lastRide.Clear();
             hatch = null;
             hatchOpen = 0f;
             hatchWantOpen = false;
@@ -1217,7 +1218,8 @@ namespace Upstairs.Services
         {
             while (car != null)
             {
-                float interval = PluginConfig.MonsterPatrolInterval.Value;
+                // More floors, more traffic: the base interval is for one extra floor.
+                float interval = PluginConfig.MonsterPatrolInterval.Value / Mathf.Max(1, FloorCount() - 1);
                 yield return new WaitForSeconds(interval > 0f ? interval * Random.Range(0.7f, 1.3f) : 30f);
                 if (car == null)
                     yield break;
@@ -1229,11 +1231,26 @@ namespace Upstairs.Services
             }
         }
 
+        private static int FloorCount()
+        {
+            var heights = new List<float>();
+            foreach (Dock d in docks)
+            {
+                if (!heights.Exists(h => Mathf.Abs(h - d.Position.y) < 6f))
+                    heights.Add(d.Position.y);
+            }
+            return heights.Count;
+        }
+
+        // When each monster last rode, so the same one does not live in the elevator.
+        private static readonly Dictionary<EnemyParent, float> lastRide = new Dictionary<EnemyParent, float>();
+
         private static bool PickPatrol(out EnemyParent? rider, out int from, out int to)
         {
             rider = null;
             from = -1;
             to = -1;
+            float rest = 2f * PluginConfig.MonsterPatrolInterval.Value;
             var candidates = new List<(EnemyParent parent, int dock)>();
             foreach (EnemyParent parent in EnemyDirector.instance.enemiesSpawned)
             {
@@ -1241,6 +1258,8 @@ namespace Upstairs.Services
                     continue;
                 Enemy enemy = parent.Enemy;
                 if (enemy.CheckChase() || enemy.GetComponentInChildren<EnemyThinMan>(true) != null)
+                    continue;
+                if (lastRide.TryGetValue(parent, out float when) && Time.time - when < rest)
                     continue;
                 if (PlayerWithin(enemy.transform.position, 14f))
                     continue;
@@ -1264,7 +1283,7 @@ namespace Upstairs.Services
             }
             if (elsewhere.Count == 0)
                 return false;
-            List<int> pool = withPlayers.Count > 0 && Random.value < 0.6f ? withPlayers : elsewhere;
+            List<int> pool = withPlayers.Count > 0 && Random.value < 0.8f ? withPlayers : elsewhere;
             to = pool[Random.Range(0, pool.Count)];
             return true;
         }
@@ -1297,6 +1316,7 @@ namespace Upstairs.Services
             if (rider == null || !rider.Spawned || rider.Enemy == null || atDock != to)
                 yield break;
             rider.Enemy.EnemyTeleported(docks[to].Landing);
+            lastRide[rider] = Time.time;
             EnemyDirector.instance?.SetInvestigate(docks[to].Landing, 12f);
             Plugin.LogInfo($"[Elevator] {rider.enemyName} stepped out at {docks[to].Name}");
         }

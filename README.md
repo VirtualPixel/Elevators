@@ -29,7 +29,7 @@ The game does not always roll those rooms, and when it does not you get the plai
 - Rooms on the new floor come from the level's normal, passage and dead end lists. Nothing custom, nothing that looks out of place.
 - Extraction points stay on the ground floor. The haul loop is untouched.
 - The ground floor keeps its normal loot. The new floors get `ExtraLoot` percent of that on top (30 by default), placed the way the game places its own. The quota grows with them the way it does with any valuable.
-- Monsters follow. The game moves a monster that has lost you to a fresh spot some way off, and those spots include the floor you rode to, so a ride buys time, not safety. The elevator is loud: leaving and arriving draws anything close to the shaft, and a monster that had you in its sights when the doors shut turns up on your new floor a little while later, out of sight and looking. Monsters also ride it on their own now and then: an idle one near a dock calls the car, stands at the doors as they close, and steps out on another floor, usually one with someone on it. Every dock carries the shaft's sound, so a car being called, moving, and landing can be heard by the doors on any floor. The Shadow Child skips the elevator and simply appears. Turn `EnemiesOnNewFloors` off to keep them downstairs, `MonsterPatrolInterval` to 0 to stop the rides.
+- Monsters follow. The game moves a monster that has lost you to a fresh spot some way off, and those spots include the floor you rode to, so a ride buys time, not safety. The elevator is loud: leaving and arriving draws anything close to the shaft, and a monster that had you in its sights when the doors shut turns up on your new floor a little while later, out of sight and looking. Monsters also ride it on their own now and then: an idle one near a dock calls the car, stands at the doors as they close, and steps out on another floor, four times in five one with someone on it. More floors, more rides. Every dock carries the shaft's sound, so a car being called, moving, and landing can be heard by the doors on any floor. The Shadow Child skips the elevator and simply appears. Turn `EnemiesOnNewFloors` off to keep them downstairs, `MonsterPatrolInterval` to 0 to stop the rides.
 - The gap between floors is measured per level from the tallest and deepest rooms in play, so a catwalk never pokes through the floor above. If you somehow end up outside every room and off the navmesh, on a roof between floors say, the lift catches you after a few seconds and puts you back on the ground pad. FreeFly flyers are left alone.
 
 ## Settings
@@ -44,7 +44,7 @@ The game does not always roll those rooms, and when it does not you get the plai
 | FloorSize | `60` | Rooms on each new floor as a percent of the ground floor's rooms |
 | ExtraLoot | `30` | Valuables on the new floors, percent of what the ground floor gets |
 | EnemiesOnNewFloors | `true` | Monsters turn up on the new floors too |
-| MonsterPatrolInterval | `90` | Seconds between monsters riding the elevator on their own, 0 for never |
+| MonsterPatrolInterval | `90` | Seconds between monsters riding the elevator on their own with one extra floor, halved with two, 0 for never |
 | AvoidRooms | `Bottomless,Outside` | Rooms with these words in their name never get picked for a new floor |
 | LiftCooldown | `4` | Seconds before the same player can ride again |
 | VoidRescue | `true` | Anyone stuck outside every room for a few seconds gets brought back to the ground elevator |
