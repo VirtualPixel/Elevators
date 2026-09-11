@@ -17,6 +17,20 @@ namespace Elevators.Tests
         }
 
         [Fact]
+        public void ALiftCellWithAnOpenedWallIsAPlainRoom()
+        {
+            // One neighbour would make the lift cell a dead end; with a wall opened for the car
+            // it has to be a plain room, turned any quarter, so a floor stands behind that wall.
+            var g = new bool[3, 3];
+            g[0, 0] = true; g[1, 0] = true; g[2, 0] = true;
+            FloorPlan plan = FloorPlan.Build(g, 0, 0, 3, 2, new Random(4), null, 0);
+            FloorPlan.Cell lift = plan.At(0, 0)!;
+            Assert.Equal(FloorPlan.Kind.Normal, lift.Kind);
+            Assert.Equal(0f, lift.RotationY % 90f);
+            Assert.False(lift.Top);
+        }
+
+        [Fact]
         public void OnlyStacksOnActiveGroundCells()
         {
             bool[,] ground = Ground();

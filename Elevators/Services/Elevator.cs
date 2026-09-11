@@ -154,6 +154,12 @@ namespace Elevators.Services
         private static float doorWait;
         private static float landWait;
         private const float LandPause = 0.9f;
+        // After the thud a chime, and a moment before the doors move: a real elevator's arrival.
+        private static float chimeWait;
+        private const float ChimePause = 2f;
+        // Doors take their time, a slow open and a firmer close, in openness per second.
+        private const float DoorOpenRate = 0.55f;
+        private const float DoorCloseRate = 0.8f;
         private static Sound? landThud;
         private static float openHold;
         private const float OpenHoldTime = 6f;
@@ -163,6 +169,14 @@ namespace Elevators.Services
         private static bool localRiding;
         private static AudioSource? hum;
         private static Sound? humLoop;
+        // Creaks from the Museum's shaft ambience, the arrival chime, and a little drift in the
+        // motor's pitch from trip to trip, so no two rides sound the same.
+        private static Sound? creaks;
+        private static bool creaksLooked;
+        private static float nextCreak;
+        private static Sound? chime;
+        private static float tripPitch = 1f;
+        private static readonly HashSet<int> passed = new HashSet<int>();
         private static Rigidbody? body;
         private static float cageHalfWidth = 1.7f;
         private static Transform? hatch;
@@ -651,6 +665,7 @@ namespace Elevators.Services
             hum = null;
             humLoop = null;
             landWait = 0f;
+            chimeWait = 0f;
             openHold = 0f;
             queued = -1;
             pursuers.Clear();
@@ -672,6 +687,11 @@ namespace Elevators.Services
             hatchHeld = false;
             docks.Clear();
             shutBoxes.Clear();
+            shaftFrame = null;
+            passed.Clear();
+            lostHeads.Clear();
+            fallen.Clear();
+            lastMonsterCall = -999f;
             atDock = -1;
             toDock = -1;
             localRiding = false;
@@ -691,6 +711,8 @@ namespace Elevators.Services
             }
             sounds = Object.FindObjectOfType<ExtractionPoint>();
             Plugin.LogInfo($"[Elevator] one-shot sounds {(sounds != null ? "from the extraction point" : "MISSING, no extraction point found")}");
+            FindCreaks();
+            chime = Chime();
             foreach ((Vector3 pad, float yaw, string name, Vector3 landing) in pads)
                 docks.Add(new Dock { Position = pad, Yaw = yaw, Name = name, Landing = landing });
 
@@ -1045,10 +1067,20 @@ namespace Elevators.Services
                 AddSlot(face, new Vector3(0f, 0f, 0.03f), ButtonKind.Call, index, "CALL");
                 return;
             }
+            if (WallMount(dock, facing, out Vector3 wallAt, out float across))
+            {
+                var mount = new GameObject("Elevators dock");
+                mount.transform.SetPositionAndRotation(wallAt, facing);
+                Transform face = Panel(mount.transform, Vector3.zero, Quaternion.Euler(0f, 180f, 0f), 0.44f);
+                AddSlot(face, new Vector3(0f, 0.08f, 0.02f), ButtonKind.Call, index, "CALL");
+                CallLight(mount.transform, new Vector3(0f, -0.5f, -0.9f));
+                Plugin.LogInfo($"[Elevator] call button on the wall at the {dock.Name} dock, {(across > 0f ? "right" : "left")} of the doors");
+                return;
+            }
+            // No clear wall beside the doors: a post in the room instead.
             // An unscaled stand holds the post cube and the panel, so the panel keeps its shape.
             var stand = new GameObject("Elevators dock");
-            // Clear of the door frame and its pillar, a step into the room.
-            stand.transform.SetPositionAndRotation(dock.Position + facing * new Vector3(2.5f, 0f, -2.1f), facing);
+            stand.transform.SetPositionAndRotation(StandSpot(dock, facing), facing);
             var post = GameObject.CreatePrimitive(PrimitiveType.Cube);
             post.name = "post";
             post.transform.SetParent(stand.transform, false);
@@ -1060,14 +1092,122 @@ namespace Elevators.Services
             // Faces the room, which is the car's -z.
             Transform plate = Panel(stand.transform, new Vector3(0f, 1.1f, -0.08f), Quaternion.Euler(0f, 180f, 0f), 0.44f);
             AddSlot(plate, new Vector3(0f, 0.08f, 0.02f), ButtonKind.Call, index, "CALL");
+            CallLight(stand.transform, new Vector3(0f, 0.6f, -1.2f));
+        }
+
+        private static void CallLight(Transform parent, Vector3 localPos)
+        {
             var glow = new GameObject("call light").AddComponent<Light>();
-            glow.transform.SetParent(stand.transform, false);
-            glow.transform.localPosition = new Vector3(0f, 0.6f, -1.2f);
+            glow.transform.SetParent(parent, false);
+            glow.transform.localPosition = localPos;
             glow.type = LightType.Point;
             glow.color = new Color(1f, 0.75f, 0.45f);
             glow.intensity = 0.8f;
             glow.range = 1.8f;
             glow.shadows = LightShadows.None;
+        }
+
+        // Where a real call button goes: on the room's wall beside the doors, at hand height, on
+        // flat wall with nothing standing in front of it. Rooms lined with shelves up to the
+        // doorway have no floor space for a post, but they still have that wall.
+        private const float ButtonHeight = 1.1f;
+
+        private static bool WallMount(Dock dock, Quaternion facing, out Vector3 at, out float across)
+        {
+            at = Vector3.zero;
+            across = 0f;
+            Vector3 toWall = facing * Vector3.forward;
+            foreach (float reach in new[] { 1.7f, 2.1f })
+            {
+                foreach (float side in new[] { 1f, -1f })
+                {
+                    float x = reach * side;
+                    if (!WallAt(dock, facing, x, ButtonHeight, out RaycastHit hit))
+                        continue;
+                    bool flat = true;
+                    foreach (Vector2 corner in new[] { new Vector2(-0.16f, -0.25f), new Vector2(0.16f, -0.25f), new Vector2(-0.16f, 0.25f), new Vector2(0.16f, 0.25f) })
+                    {
+                        if (!WallAt(dock, facing, x + corner.x, ButtonHeight + corner.y, out RaycastHit c) || Mathf.Abs(c.distance - hit.distance) > 0.05f)
+                        {
+                            flat = false;
+                            break;
+                        }
+                    }
+                    if (!flat || Crowded(hit.point - toWall * 0.3f, facing, new Vector3(0.3f, 0.35f, 0.25f)))
+                        continue;
+                    Vector3 front = hit.point - toWall * 0.7f;
+                    front.y = dock.Position.y;
+                    if (!Physics.Raycast(front + Vector3.up * 0.5f, Vector3.down, 1f, ~0, QueryTriggerInteraction.Ignore))
+                        continue;
+                    at = hit.point + hit.normal * 0.03f;
+                    across = side;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // The room's face of the opened wall, about a metre and a half on from a step into the
+        // room, square to the ray.
+        private static bool WallAt(Dock dock, Quaternion facing, float x, float height, out RaycastHit hit)
+        {
+            Vector3 origin = dock.Position + facing * new Vector3(x, height, -3f);
+            if (!Physics.Raycast(origin, facing * Vector3.forward, out hit, 1.6f, ~0, QueryTriggerInteraction.Ignore))
+                return false;
+            return hit.distance > 1.15f && hit.distance < 1.5f && Vector3.Dot(hit.normal, facing * Vector3.back) > 0.9f;
+        }
+
+        // Something fixed in the space in front of the plate. Loose things get knocked about and
+        // don't count.
+        private static bool Crowded(Vector3 centre, Quaternion facing, Vector3 half)
+        {
+            foreach (Collider c in Physics.OverlapBox(centre, half, facing, ~0, QueryTriggerInteraction.Ignore))
+            {
+                if (c.GetComponentInParent<PhysGrabObject>() == null)
+                    return true;
+            }
+            return false;
+        }
+
+        // Where the call post goes: beside the doorway against the nearest wall, a step into the
+        // room, and never inside anything. A cross corridor's arm is one tile wide, so a fixed
+        // offset put the post in the corner block's wall; the room is measured instead.
+        private static readonly float[] StandDepths = { -2.7f, -3.6f };
+        private const float StandOffWall = 0.45f;
+
+        private static Vector3 StandSpot(Dock dock, Quaternion facing)
+        {
+            foreach (float depth in StandDepths)
+            {
+                foreach (float side in new[] { 1f, -1f })
+                {
+                    Vector3 origin = dock.Position + facing * new Vector3(0f, 1f, depth);
+                    Vector3 across = facing * (Vector3.right * side);
+                    float reach = 2.5f;
+                    if (Physics.Raycast(origin, across, out RaycastHit wall, 3.5f, ~0, QueryTriggerInteraction.Ignore))
+                        reach = wall.distance - StandOffWall;
+                    // Too close to the doorway to leave the way through it clear.
+                    if (reach < 0.9f)
+                        continue;
+                    Vector3 spot = dock.Position + facing * new Vector3(reach * side, 0f, depth);
+                    if (StandFits(spot, facing))
+                    {
+                        Plugin.LogInfo($"[Elevator] call post at the {dock.Name} dock: {(side > 0f ? "right" : "left")} of the doors, {reach:0.00} m across, {-depth - 1.55f:0.00} m in");
+                        return spot;
+                    }
+                }
+            }
+            Plugin.LogAlways($"[Elevator] no clear spot for the call post at the {dock.Name} dock, it stands where it always did");
+            return dock.Position + facing * new Vector3(2.5f, 0f, -2.1f);
+        }
+
+        // Nothing fixed through the post or the plate, and a floor under it. Only the level's own
+        // geometry counts, which is the same on every client, so everyone puts it in one place.
+        private static bool StandFits(Vector3 spot, Quaternion facing)
+        {
+            if (Crowded(spot + Vector3.up * 0.7f, facing, new Vector3(0.3f, 0.66f, 0.22f)))
+                return false;
+            return Physics.Raycast(spot + Vector3.up * 0.5f, Vector3.down, 1f, ~0, QueryTriggerInteraction.Ignore);
         }
 
         private static Material? plateMaterial;
@@ -1139,6 +1279,9 @@ namespace Elevators.Services
         private static Material? shaftMaterial;
 
         private const float ShaftBelow = 14f;
+        private static Transform? shaftFrame;
+        private static float shaftBottom;
+        private static float shaftTop;
 
         private static void BuildShaft()
         {
@@ -1155,6 +1298,9 @@ namespace Elevators.Services
             Vector3 centre = (low.Position + high.Position) * 0.5f + facing * new Vector3(0f, 0f, 1.05f);
             var shaft = new GameObject("Elevators shaft");
             shaft.transform.SetPositionAndRotation(new Vector3(centre.x, (bottom + top) * 0.5f, centre.z), facing);
+            shaftFrame = shaft.transform;
+            shaftBottom = bottom;
+            shaftTop = top;
             float mid = (bottom + top) * 0.5f;
             for (int side = 0; side < 4; side++)
             {
@@ -1167,6 +1313,8 @@ namespace Elevators.Services
                     foreach (Dock d in sorted)
                     {
                         Piece(shaft.transform, turn, from, d.Position.y - 0.2f, mid);
+                        if (!d.InShaft)
+                            Frame(shaft.transform, turn, d.Position.y, mid);
                         from = d.Position.y + 4.6f;
                     }
                     Piece(shaft.transform, turn, from, top, mid);
@@ -1174,14 +1322,15 @@ namespace Elevators.Services
                 }
                 Piece(shaft.transform, turn, bottom, top, mid);
             }
-            var floor = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            Object.Destroy(floor.GetComponent<Collider>());
+            // Solid ground at the bottom, dark like the walls, so whatever comes down the shaft
+            // lands on something and a look down ends somewhere.
+            var floor = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            floor.name = "shaft floor";
             floor.transform.SetParent(shaft.transform, false);
-            floor.transform.localPosition = new Vector3(0f, bottom - (bottom + top) * 0.5f, 0f);
-            floor.transform.localRotation = Quaternion.Euler(-90f, 0f, 0f);
-            floor.transform.localScale = new Vector3(5.2f, 5.2f, 1f);
+            floor.transform.localPosition = new Vector3(0f, bottom - (bottom + top) * 0.5f - 0.25f, 0f);
+            floor.transform.localScale = new Vector3(5.6f, 0.5f, 5.6f);
             floor.GetComponent<Renderer>().sharedMaterial = shaftMaterial;
-            BuildPit(new Vector3(centre.x, bottom + 1.5f, centre.z), facing);
+            BuildPit(new Vector3(centre.x, bottom + 1f, centre.z), facing);
         }
 
         // The Museum's own shaft walls and pipes, stacked the length of the shaft, so a look
@@ -1289,17 +1438,67 @@ namespace Elevators.Services
                 if (layer == null)
                     continue;
                 Quaternion facing = Quaternion.Euler(0f, dock.Yaw, 0f);
-                Vector3 at = dock.Position + facing * new Vector3(0f, 0f, -1.5f);
+                // The game pins a door mark to one end of its wall tile and draws it along the
+                // mark's own +x, facing the room. One hung from the doorway's middle sat half a
+                // tile to the side of the doors.
+                Vector3 at = dock.Position + facing * new Vector3(LevelGenerator.TileSize * 0.5f, 0f, -1.55f);
                 GameObject go = Object.Instantiate(map.Door1x1Object, layer.transform);
                 go.name = "Elevators map door";
                 go.transform.position = at * map.Scale + layer.transform.position + map.GetLayerPosition(layer.layer);
-                go.transform.rotation = facing;
+                go.transform.rotation = facing * Quaternion.Euler(0f, 180f, 0f);
                 foreach (Renderer r in go.GetComponentsInChildren<Renderer>(true))
                 {
                     if (r.material != null && r.material.HasProperty("_Color"))
                         r.material.color = MapDoorTint;
                 }
             }
+        }
+
+        // The wall the room opened is one-sided: from inside the car it is not there at all. A
+        // dark frame in the wall plane around the doorway, left, right and above it, gives the
+        // look back out of the car a wall and the shaft a face at every dock.
+        private static void Frame(Transform shaft, Quaternion turn, float dockY, float mid)
+        {
+            float hole = DoorSlide + 0.1f;
+            float from = dockY - 0.2f;
+            float to = dockY + 4.6f;
+            Patch(shaft, turn, from, to, mid, -2.6f, -hole);
+            Patch(shaft, turn, from, to, mid, hole, 2.6f);
+            Patch(shaft, turn, dockY + DoorTop(), to, mid, -hole, hole);
+        }
+
+        private static void Patch(Transform shaft, Quaternion turn, float from, float to, float mid, float xFrom, float xTo)
+        {
+            if (to - from < 0.05f || xTo - xFrom < 0.05f)
+                return;
+            var quad = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            Object.Destroy(quad.GetComponent<Collider>());
+            quad.transform.SetParent(shaft, false);
+            // A few centimetres shaft side of the wall line, clear of the room's own wall face.
+            quad.transform.localPosition = turn * new Vector3((xFrom + xTo) * 0.5f, 0f, 2.56f) + Vector3.up * ((from + to) * 0.5f - mid);
+            quad.transform.localRotation = turn * Quaternion.Euler(0f, 180f, 0f);
+            quad.transform.localScale = new Vector3(xTo - xFrom, to - from, 1f);
+            quad.GetComponent<Renderer>().sharedMaterial = shaftMaterial;
+        }
+
+        // How high the car's doorway reaches above the dock floor, read off the door mesh.
+        private static float DoorTop()
+        {
+            Renderer? door = doorL != null ? doorL.GetComponent<Renderer>() : null;
+            if (door == null || car == null)
+                return 2.6f;
+            float floorY = car.transform.parent.position.y - FloorOffset;
+            return Mathf.Clamp(door.bounds.max.y - floorY, 2f, 4.4f);
+        }
+
+        // Inside the shaft's own box, car or not.
+        private static bool InShaft(Vector3 pos)
+        {
+            if (shaftFrame == null)
+                return false;
+            Vector3 local = shaftFrame.InverseTransformPoint(pos);
+            // The door face is at -2.6; anything on the room side of it is in the room.
+            return Mathf.Abs(local.x) < 2.8f && local.z > -2.45f && local.z < 2.8f && pos.y > shaftBottom - 2f && pos.y < shaftTop;
         }
 
         private static void Piece(Transform shaft, Quaternion turn, float from, float to, float mid)
@@ -1398,6 +1597,129 @@ namespace Elevators.Services
                     ReverbMix = 1f,
                     FalloffMultiplier = 1f
                 };
+            }
+        }
+
+        // The Museum's elevator shaft ambience has a few metal groans in it. They are the shaft's
+        // own voice here, on every level.
+        private static void FindCreaks()
+        {
+            if (creaksLooked)
+                return;
+            creaksLooked = true;
+            var clips = new List<AudioClip>();
+            // The Museum elevator room plays its shaft ambience through an override on the room.
+            Transform? room = carriageAsset != null ? carriageAsset.transform.root : null;
+            if (room != null)
+            {
+                foreach (RoomVolume volume in room.GetComponentsInChildren<RoomVolume>(true))
+                    AddBreakers(volume.RoomAmbienceOverride, clips, null);
+                foreach (AmbienceLoopOverride loop in room.GetComponentsInChildren<AmbienceLoopOverride>(true))
+                    AddBreakers(loop.ambience, clips, null);
+            }
+            RunManager rm = RunManager.instance;
+            if (clips.Count == 0 && rm != null && rm.levels != null)
+            {
+                foreach (Level level in rm.levels)
+                {
+                    if (level == null || level.AmbiencePresets == null)
+                        continue;
+                    foreach (LevelAmbience preset in level.AmbiencePresets)
+                        AddBreakers(preset, clips, "elevator shaft");
+                }
+            }
+            if (clips.Count == 0)
+            {
+                Plugin.LogInfo("[Elevator] no shaft creaks found, the shaft stays quiet between trips");
+                return;
+            }
+            creaks = new Sound
+            {
+                Sounds = clips.ToArray(),
+                Volume = 0.35f,
+                VolumeRandom = 0.1f,
+                Pitch = 1f,
+                PitchRandom = 0.12f,
+                SpatialBlend = 1f,
+                Doppler = 0f,
+                ReverbMix = 1f,
+                FalloffMultiplier = 1.2f
+            };
+            Plugin.LogInfo($"[Elevator] {clips.Count} shaft creak(s) from the Museum's shaft ambience");
+        }
+
+        private static void AddBreakers(LevelAmbience? ambience, List<AudioClip> clips, string? nameHas)
+        {
+            if (ambience == null || ambience.breakers == null)
+                return;
+            foreach (LevelAmbienceBreaker breaker in ambience.breakers)
+            {
+                if (breaker == null || breaker.sound == null || clips.Contains(breaker.sound))
+                    continue;
+                if (nameHas != null && !breaker.sound.name.ToLowerInvariant().Contains(nameHas))
+                    continue;
+                clips.Add(breaker.sound);
+            }
+        }
+
+        // The extraction point's surplus chime, one note of it, as the arrival bell.
+        private static Sound? Chime()
+        {
+            Sound? source = sounds != null ? sounds.surplusStateDoneLevel1 : null;
+            if (source == null || source.Sounds == null || source.Sounds.Length == 0)
+                return null;
+            return new Sound
+            {
+                Sounds = new[] { source.Sounds[0] },
+                Volume = 0.45f,
+                VolumeRandom = 0.05f,
+                Pitch = 1f,
+                PitchRandom = 0.02f,
+                SpatialBlend = 1f,
+                Doppler = 0f,
+                ReverbMix = 1f,
+                FalloffMultiplier = 1.5f
+            };
+        }
+
+        // The shaft is never quite quiet: a groan now and then from somewhere along it, more of
+        // them and closer while the car is on the move.
+        // The car has come to rest with nowhere else to go: a chime, then the doors.
+        internal static void Arrive()
+        {
+            if (car == null || Moving)
+                return;
+            queued = -1;
+            Play(chime ?? sounds?.soundActivate3, car.transform.parent.position);
+            chimeWait = ChimePause;
+        }
+
+        private static void Creak(float dt)
+        {
+            if (creaks == null || car == null)
+                return;
+            nextCreak -= dt;
+            if (nextCreak > 0f)
+                return;
+            nextCreak = Moving ? Random.Range(2.5f, 6f) : Random.Range(25f, 70f);
+            Vector3 at = car.transform.parent.position + Vector3.up * Random.Range(-3f, 6f) + Random.insideUnitSphere * 1.5f;
+            creaks.Play(at, Moving ? 1f : 0.5f);
+        }
+
+        // The car passing a floor's doors: a knock, heard in the car and out on that landing.
+        private static void PassDocks(float fromY, float toY)
+        {
+            for (int i = 0; i < docks.Count; i++)
+            {
+                if (i == toDock || passed.Contains(i))
+                    continue;
+                float y = docks[i].Position.y + FloorOffset;
+                if ((fromY - y) * (toY - y) > 0f)
+                    continue;
+                passed.Add(i);
+                Play(landThud, docks[i].Position + Vector3.up * 1.5f, 0.45f);
+                if (car != null)
+                    Play(landThud, car.transform.parent.position, 0.25f);
             }
         }
 
@@ -1605,16 +1927,29 @@ namespace Elevators.Services
                     continue;
                 if (PlayerWithin(enemy.transform.position, 14f))
                     continue;
-                int dock = NearestDock(enemy.transform.position, 25f);
+                // Anywhere on a floor with a dock: a roamer at the far end of the level walks
+                // over, or is brought over out of sight. Near a dock only was a patrol that
+                // never happened on a big floor.
+                int dock = NearestDock(enemy.transform.position, PatrolReach);
                 if (dock >= 0)
                     candidates.Add((parent, dock));
             }
             if (candidates.Count == 0)
                 return false;
             (rider, from) = candidates[Random.Range(0, candidates.Count)];
-            // Somewhere else, leaning toward a floor with someone on it.
+            return PickDestination(from, out to);
+        }
+
+        private const float PatrolReach = 90f;
+
+        // Somewhere else: the floor the cart is on first, since that is where the crew ends up,
+        // then a floor with someone on it, then anywhere.
+        private static bool PickDestination(int from, out int to)
+        {
+            to = -1;
             var elsewhere = new List<int>();
             var withPlayers = new List<int>();
+            var withCart = new List<int>();
             for (int i = 0; i < docks.Count; i++)
             {
                 if (Mathf.Abs(docks[i].Position.y - docks[from].Position.y) < 6f)
@@ -1622,12 +1957,31 @@ namespace Elevators.Services
                 elsewhere.Add(i);
                 if (PlayerWithin(docks[i].Position, 60f, sameFloor: true))
                     withPlayers.Add(i);
+                if (CartOnFloor(docks[i].Position.y))
+                    withCart.Add(i);
             }
             if (elsewhere.Count == 0)
                 return false;
-            List<int> pool = withPlayers.Count > 0 && Random.value < 0.8f ? withPlayers : elsewhere;
+            List<int> pool = withCart.Count > 0 && Random.value < 0.75f ? withCart
+                : withPlayers.Count > 0 && Random.value < 0.8f ? withPlayers
+                : elsewhere;
             to = pool[Random.Range(0, pool.Count)];
             return true;
+        }
+
+        private static bool CartOnFloor(float y)
+        {
+            foreach (PhysGrabCart cart in Object.FindObjectsOfType<PhysGrabCart>())
+            {
+                if (cart == null || Mathf.Abs(cart.transform.position.y - y) >= 6f)
+                    continue;
+                // One still parked in the truck says nothing about where the crew went.
+                RoomVolumeCheck check = cart.GetComponent<RoomVolumeCheck>();
+                if (check != null && check.inTruck)
+                    continue;
+                return true;
+            }
+            return false;
         }
 
         internal static void StartPatrol(EnemyParent rider, int from, int to) => Plugin.Instance.StartCoroutine(Patrol(rider, from, to));
@@ -1662,8 +2016,11 @@ namespace Elevators.Services
             Vector3 buttonAt = call != null ? call.transform.position : docks[from].Landing;
             if (rider.Enemy.HasStateInvestigate)
                 rider.Enemy.StateInvestigate.Set(docks[from].Landing, false);
+            // Time for the walk, by how far it is; a long way is still worth walking when
+            // someone might see it come.
+            float walkBudget = Mathf.Clamp(Vector3.Distance(rider.Enemy.transform.position, buttonAt) / 2f, 12f, 40f);
             float walked = 0f;
-            while (walked < 12f)
+            while (walked < walkBudget)
             {
                 yield return new WaitForSeconds(0.5f);
                 walked += 0.5f;
@@ -1699,8 +2056,8 @@ namespace Elevators.Services
                 while ((Moving || atDock != from) && t < 40f) { t += 0.5f; yield return new WaitForSeconds(0.5f); }
                 if (atDock != from || Moving)
                     yield break;
-                // The landing pause opens the doors on its own.
-                yield return new WaitForSeconds(LandPause + 0.5f);
+                // The landing pause, the chime and the doors' own slow open.
+                yield return new WaitForSeconds(LandPause + ChimePause + 1f / DoorOpenRate + 0.5f);
             }
             ElevatorsNet.SendDoors(6f);
             if (rider.Enemy.HasStateInvestigate)
@@ -1813,12 +2170,16 @@ namespace Elevators.Services
             doorWait = DoorTime;
             // A press inside the landing pause must not let that pause open the doors mid-trip.
             landWait = 0f;
+            chimeWait = 0f;
             openHold = 0f;
             doorsHeld = true;
             toDock = to;
             atDock = -1;
             lastCarPos = root.position;
             localRiding = LocalInside();
+            tripPitch = Random.Range(0.94f, 1.06f);
+            passed.Clear();
+            passed.Add(from);
             Play(sounds?.soundActivate1, root.position);
             PlayAtDocks(sounds?.soundActivate1, root.position, 0.5f);
             HearTheShaft();
@@ -1830,11 +2191,12 @@ namespace Elevators.Services
             // The game's own loop player: fades in on the way, out on arrival, low-passed
             // through walls like every other loop it runs.
             if (humLoop != null && hum != null && hum.gameObject.activeInHierarchy)
-                humLoop.PlayLoop(Moving, 2f, 3f);
+                humLoop.PlayLoop(Moving, 2f, 3f, tripPitch);
             foreach (Dock dock in docks)
-                dock.Speaker?.PlayLoop(Moving, 1.5f, 2f);
+                dock.Speaker?.PlayLoop(Moving, 1.5f, 2f, tripPitch);
             if (car == null)
                 return;
+            Creak(dt);
             Transform root = car.transform.parent;
 
             if (!Moving)
@@ -1862,16 +2224,23 @@ namespace Elevators.Services
             if (landWait > 0f)
             {
                 landWait -= dt;
-                if (landWait <= 0f)
+                // The host alone knows whether a queued press sends the car straight on, so it
+                // decides, and every client chimes on its word.
+                if (landWait <= 0f && SemiFunc.IsMasterClientOrSingleplayer())
                 {
-                    if (queued >= 0 && queued != atDock && SemiFunc.IsMasterClientOrSingleplayer() && TryDepart(queued))
+                    if (queued >= 0 && queued != atDock && TryDepart(queued))
                         queued = -1;
                     else
-                    {
-                        queued = -1;
-                        doorsHeld = false;
-                        openHold = OpenHoldTime + 1f;
-                    }
+                        ElevatorsNet.SendArrive();
+                }
+            }
+            if (chimeWait > 0f)
+            {
+                chimeWait -= dt;
+                if (chimeWait <= 0f)
+                {
+                    doorsHeld = false;
+                    openHold = OpenHoldTime + 1f;
                 }
             }
             // Doors open by button and on arrival, and close again on their own, unless someone is
@@ -1881,11 +2250,14 @@ namespace Elevators.Services
             if (openHold > 0f && openHold < 0.5f && DoorwayBlocked())
                 openHold = 0.5f;
             float target = doorsHeld ? 0f : (openHold > 0f ? 1f : 0f);
-            float open = Mathf.MoveTowards(doorOpen, target, dt * 2f);
+            float open = Mathf.MoveTowards(doorOpen, target, dt * (target > doorOpen ? DoorOpenRate : DoorCloseRate));
             if (open != doorOpen)
             {
                 if ((doorOpen == 0f && open > 0f) || (doorOpen == 1f && open < 1f))
                     Play(sounds?.soundActivate2, root.position);
+                // A soft stop as they meet or reach the end of their run.
+                if (open == 0f || open == 1f)
+                    Play(landThud, root.position, 0.18f);
                 doorOpen = open;
                 if (doorL != null) doorL.localPosition = closedL + Vector3.left * (DoorSlide * open);
                 if (doorR != null) doorR.localPosition = closedR + Vector3.right * (DoorSlide * open);
@@ -1900,7 +2272,7 @@ namespace Elevators.Services
                 if (dock.LandingL == null && dock.LandingR == null)
                     continue;
                 float want = i == atDock ? doorOpen : 0f;
-                float now = Mathf.MoveTowards(dock.LandingOpen, want, dt * 2f);
+                float now = Mathf.MoveTowards(dock.LandingOpen, want, dt * (want > dock.LandingOpen ? DoorOpenRate : DoorCloseRate));
                 if (now == dock.LandingOpen)
                     continue;
                 dock.LandingOpen = now;
@@ -1935,6 +2307,7 @@ namespace Elevators.Services
             if (arrived)
                 travelT = float.MaxValue;
             body.MovePosition(next);
+            PassDocks(before.y, next.y);
             Vector3 delta = next - before;
             CarVelocityY = arrived ? 0f : delta.y / dt;
             CarryCargo();
@@ -2179,6 +2552,83 @@ namespace Elevators.Services
         // path point on the floor it is closest to.
         private static readonly Dictionary<EnemyParent, int> lostTicks = new Dictionary<EnemyParent, int>();
 
+        // A head that ends up down the shaft goes where the game sends a head lost outside the
+        // level: the extraction point's safe spot while one is running, else the truck.
+        private static readonly Dictionary<PlayerDeathHead, int> lostHeads = new Dictionary<PlayerDeathHead, int>();
+
+        private static void RescueHeads()
+        {
+            foreach (PlayerDeathHead head in Object.FindObjectsOfType<PlayerDeathHead>())
+            {
+                if (head == null || !head.triggered || head.physGrabObject == null || head.physGrabObject.grabbed)
+                    continue;
+                Vector3 at = head.transform.position;
+                if (!InShaft(at) || IsInside(at))
+                {
+                    lostHeads.Remove(head);
+                    continue;
+                }
+                lostHeads.TryGetValue(head, out int ticks);
+                ticks++;
+                lostHeads[head] = ticks;
+                if (ticks < 2)
+                    continue;
+                lostHeads.Remove(head);
+                RoundDirector round = RoundDirector.instance;
+                Transform? safe = round != null && round.extractionPointActive && round.extractionPointCurrent != null
+                    ? round.extractionPointCurrent.safetySpawn
+                    : TruckSafetySpawnPoint.instance != null ? TruckSafetySpawnPoint.instance.transform : null;
+                if (safe == null)
+                    continue;
+                head.physGrabObject.Teleport(safe.position, safe.rotation);
+                Plugin.LogInfo("[Elevator] a head down the shaft is back with the truck");
+            }
+        }
+
+        // Whatever lands on the shaft floor gets what the game gives anything that falls out of
+        // the level: a cart or a bought item back to the truck, a valuable broken. The floor
+        // stops the fall short of where the game would do that itself.
+        private static readonly Dictionary<PhysGrabObject, int> fallen = new Dictionary<PhysGrabObject, int>();
+
+        private static void RecoverFallen()
+        {
+            if (shaftFrame == null)
+                return;
+            var seen = new HashSet<PhysGrabObject>();
+            Vector3 centre = new Vector3(shaftFrame.position.x, shaftBottom + 2.5f, shaftFrame.position.z);
+            foreach (Collider c in Physics.OverlapBox(centre, new Vector3(2.6f, 2.5f, 2.6f), shaftFrame.rotation, ~0, QueryTriggerInteraction.Ignore))
+            {
+                PhysGrabObject obj = c.GetComponentInParent<PhysGrabObject>();
+                if (obj == null || !seen.Add(obj) || obj.grabbed || obj.impactDetector == null)
+                    continue;
+                if (obj.GetComponent<PlayerDeathHead>() != null || obj.GetComponent<PlayerTumble>() != null || obj.GetComponentInParent<EnemyRigidbody>() != null)
+                    continue;
+                fallen.TryGetValue(obj, out int ticks);
+                fallen[obj] = ticks + 1;
+            }
+            foreach (PhysGrabObject obj in new List<PhysGrabObject>(fallen.Keys))
+            {
+                if (obj == null || !seen.Contains(obj))
+                {
+                    fallen.Remove(obj!);
+                    continue;
+                }
+                if (fallen[obj] < 2)
+                    continue;
+                fallen.Remove(obj);
+                if (obj.impactDetector.destroyDisable)
+                {
+                    if (obj.impactDetector.destroyDisableTeleport && TruckSafetySpawnPoint.instance != null)
+                        obj.Teleport(TruckSafetySpawnPoint.instance.transform.position, TruckSafetySpawnPoint.instance.transform.rotation);
+                }
+                else
+                {
+                    obj.impactDetector.DestroyObject();
+                }
+                Plugin.LogInfo($"[Elevator] {obj.name} fell to the bottom of the shaft and was recovered");
+            }
+        }
+
         private static System.Collections.IEnumerator RescueMonsters()
         {
             int rooms = LayerMask.GetMask("RoomVolume");
@@ -2187,6 +2637,8 @@ namespace Elevators.Services
                 yield return new WaitForSeconds(2f);
                 if (car == null || EnemyDirector.instance == null || !SemiFunc.IsMasterClientOrSingleplayer() || LevelGenerator.Instance == null)
                     continue;
+                RescueHeads();
+                RecoverFallen();
                 foreach (EnemyParent parent in EnemyDirector.instance.enemiesSpawned)
                 {
                     if (parent == null || !parent.Spawned || parent.Enemy == null)
@@ -2435,7 +2887,7 @@ namespace Elevators.Services
         private static void MonstersAtTheDoors(float dt)
         {
             doorsLook -= dt;
-            if (doorsLook > 0f || Moving || atDock < 0 || doorOpen > 0f || openHold > 0f || landWait > 0f || Time.time - monsterPressed < 5f || EnemyDirector.instance == null)
+            if (doorsLook > 0f || Moving || atDock < 0 || doorOpen > 0f || openHold > 0f || landWait > 0f || chimeWait > 0f || Time.time - monsterPressed < 5f || EnemyDirector.instance == null)
                 return;
             doorsLook = 0.5f;
             Vector3 landing = docks[atDock].Landing;
@@ -2445,7 +2897,10 @@ namespace Elevators.Services
                     continue;
                 Vector3 at = parent.Enemy.transform.position;
                 if (Mathf.Abs(at.y - landing.y) > 3f || Vector3.Distance(at, landing) > 3.5f)
+                {
+                    MonsterAtAnotherDock(parent, at);
                     continue;
+                }
                 // One that loiters by the doors is not a doorman: half a minute between its presses.
                 if (monsterPresses.TryGetValue(parent, out float last) && Time.time - last < 30f)
                     continue;
@@ -2464,6 +2919,44 @@ namespace Elevators.Services
                 return;
             }
         }
+
+        // One that reaches a dock the car is not at, the Huntsman come to see what he heard,
+        // calls the car like anyone would and rides it to where the crew is.
+        private static void MonsterAtAnotherDock(EnemyParent parent, Vector3 at)
+        {
+            if (patrolling || !PluginConfig.EnemiesOnNewFloors.Value || PluginConfig.MonsterPatrolInterval.Value <= 0f || parent.Enemy.CheckChase())
+                return;
+            // Every sound of the car sends monsters to their landings, and each could call it
+            // away in turn; one call in a while keeps the car from being passed around.
+            if (Time.time - lastMonsterCall < MonsterCallGap || parent.Enemy.GetComponentInChildren<EnemyThinMan>(true) != null)
+                return;
+            int dock = -1;
+            float best = 3.5f;
+            for (int i = 0; i < docks.Count; i++)
+            {
+                float d = Vector3.Distance(at, docks[i].Landing);
+                if (i != atDock && Mathf.Abs(at.y - docks[i].Landing.y) < 3f && d < best)
+                {
+                    best = d;
+                    dock = i;
+                }
+            }
+            if (dock < 0)
+                return;
+            if (monsterPresses.TryGetValue(parent, out float last) && Time.time - last < 30f)
+                return;
+            if (lastRide.TryGetValue(parent, out float rode) && Time.time - rode < 2f * PluginConfig.MonsterPatrolInterval.Value)
+                return;
+            if (!PickDestination(dock, out int to))
+                return;
+            monsterPresses[parent] = Time.time;
+            lastMonsterCall = Time.time;
+            Plugin.LogInfo($"[Elevator] {parent.enemyName} is at the {docks[dock].Name} dock with the car away and calls it");
+            StartPatrol(parent, dock, to);
+        }
+
+        private static float lastMonsterCall = -999f;
+        private const float MonsterCallGap = 45f;
 
         private static bool DoorwayBlocked()
         {
@@ -2580,7 +3073,7 @@ namespace Elevators.Services
         }
 
         internal static float DoorOpenAmount => doorOpen;
-        internal static string DoorState() => $"open={doorOpen:0.00} held={doorsHeld} hold={openHold:0.0} land={landWait:0.0} at={atDock} to={toDock}";
+        internal static string DoorState() => $"open={doorOpen:0.00} held={doorsHeld} hold={openHold:0.0} land={landWait:0.0} chime={chimeWait:0.0} at={atDock} to={toDock}";
 
         internal static string HumStatus() => hum == null ? "no hum" : $"playing={hum.isPlaying} vol={hum.volume:0.00} clip={(hum.clip != null ? hum.clip.name : "none")} group={(hum.outputAudioMixerGroup != null ? hum.outputAudioMixerGroup.name : "none")} active={hum.gameObject.activeInHierarchy}";
 
@@ -2598,6 +3091,12 @@ namespace Elevators.Services
             if (Moving)
                 return LocalInside() ? "riding" : "moving";
             return LocalInside() ? "inside" : "";
+        }
+
+        private static void Play(Sound? sound, Vector3 at, float volume)
+        {
+            if (sound != null)
+                sound.Play(at, volume);
         }
 
         private static void Play(Sound? sound, Vector3 at)

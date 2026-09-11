@@ -19,6 +19,10 @@ namespace ElevatorsProbe
 
         private ManualLogSource log = null!;
         internal static Level? Forced;
+        // A flag entry reads Level[@Room][:Monster][!]: roll again until the ground lift room's
+        // name contains Room, summon Monster for the monster tests, and ! rolls until a lift site.
+        private static string? wantMonster;
+        internal static string? WantRoom;
 
         private void Awake()
         {
@@ -48,7 +52,15 @@ namespace ElevatorsProbe
             for (int i = 0; i < levels.Length; i++)
             {
                 bool needSite = levels[i].EndsWith("!");
-                string levelName = levels[i].TrimEnd('!');
+                string spec = levels[i].TrimEnd('!');
+                wantMonster = null;
+                int colon = spec.IndexOf(':');
+                if (colon >= 0) { wantMonster = spec.Substring(colon + 1); spec = spec.Substring(0, colon); }
+                string? wantRoom = null;
+                int at = spec.IndexOf('@');
+                if (at >= 0) { wantRoom = spec.Substring(at + 1); spec = spec.Substring(0, at); }
+                string levelName = spec;
+                WantRoom = wantRoom;
                 Level? target = original.Find(l => l.name.Contains(levelName));
                 if (target == null)
                 {
@@ -76,6 +88,7 @@ namespace ElevatorsProbe
                     waited += 1f;
                 }
                 Forced = null;
+                WantRoom = null;
                 if (waited >= 180f)
                 {
                     log.LogError($"[Probe] {levels[i]}: level never generated");
@@ -86,6 +99,16 @@ namespace ElevatorsProbe
                 {
                     log.LogInfo($"[Probe] {levelName}: no lift site this roll, rolling again");
                     continue;
+                }
+                if (wantRoom != null)
+                {
+                    Module? liftRoom = Session.GroundLiftModule();
+                    string roomName = liftRoom != null ? liftRoom.name : "none";
+                    if (!roomName.Contains(wantRoom))
+                    {
+                        log.LogInfo($"[Probe] {levelName}: lift room is {roomName}, not {wantRoom}, rolling again");
+                        continue;
+                    }
                 }
                 // Monsters hear the elevator now; the tester stands in it and must survive that.
                 if (PlayerAvatar.instance != null && PlayerAvatar.instance.playerHealth != null)
@@ -209,7 +232,85 @@ namespace ElevatorsProbe
                     }
                 }
             }
+            foreach (Transform t in Object.FindObjectsOfType<Transform>())
+            {
+                // Landing doors and shaft pieces share the name; only a mount with a call slot counts.
+                if (t.name != "Elevators dock" || !HasChild(t, "slot Call"))
+                    continue;
+                Transform? button = null;
+                foreach (Elevator.LiftButton b in Object.FindObjectsOfType<Elevator.LiftButton>())
+                    if (b.Kind == Elevator.ButtonKind.Call && b.transform.IsChildOf(t)) { button = b.transform; break; }
+                Vector3 at = button != null ? button.position : t.position + Vector3.up * 1.18f;
+                // Anything in the space just in front of the button that isn't the button's own mount.
+                string what = "";
+                foreach (Collider c in Physics.OverlapSphere(at - t.forward * 0.14f, 0.08f, ~0, QueryTriggerInteraction.Ignore))
+                    if (!c.transform.IsChildOf(t)) what += c.name + ",";
+                Vector3 viewer = at - t.forward * 1.2f;
+                bool seen = !Physics.Linecast(viewer, at - t.forward * 0.1f, out RaycastHit block, ~0, QueryTriggerInteraction.Ignore);
+                bool ok = button != null && what.Length == 0 && seen;
+                if (!ok) found++;
+                log.LogInfo($"[Probe] {name} CALL BUTTON {(ok ? "ok" : "BLOCKED")} {(t.Find("post") != null ? "post" : "wall")} at {at} attached={button != null} inFront={what} view={(seen ? "clear" : block.collider.name)}");
+            }
+            foreach (Transform t in Object.FindObjectsOfType<Transform>())
+            {
+                if (t.name != "Elevators map door")
+                    continue;
+                log.LogInfo($"[Probe] {name} map door mark local {t.localPosition} yaw {t.eulerAngles.y:0} on {(t.parent != null ? t.parent.name : "?")}");
+            }
+            found += ShaftScan(name);
             log.LogInfo($"[Probe] {name} opening scan: {found} finding(s)");
+        }
+
+        private static bool HasChild(Transform root, string childName)
+        {
+            foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
+                if (t.name == childName) return true;
+            return false;
+        }
+
+        // Rays out of the shaft's middle at every metre of its height: each should meet a wall
+        // within reach, except the door side across a dock's doorway.
+        private int ShaftScan(string name)
+        {
+            GameObject shaft = GameObject.Find("Elevators shaft");
+            if (shaft == null)
+            {
+                log.LogInfo($"[Probe] {name} SHAFT: none built");
+                return 0;
+            }
+            float bottom = float.MaxValue, top = float.MinValue;
+            foreach (Renderer r in shaft.GetComponentsInChildren<Renderer>())
+            {
+                bottom = Mathf.Min(bottom, r.bounds.min.y);
+                top = Mathf.Max(top, r.bounds.max.y);
+            }
+            var dockYs = new List<float>();
+            foreach ((Vector3 pos, float yaw, string dock) in Elevator.DockList())
+                dockYs.Add(pos.y);
+            int holes = 0;
+            int rays = 0;
+            Transform frame = shaft.transform;
+            for (float y = bottom + 1f; y < top - 0.5f; y += 1f)
+            {
+                foreach (Vector3 local in new[] { Vector3.right, Vector3.left, Vector3.forward, Vector3.back })
+                {
+                    Vector3 origin = new Vector3(frame.position.x, y, frame.position.z);
+                    Vector3 dir = frame.TransformDirection(local);
+                    rays++;
+                    if (Physics.Raycast(origin, dir, 3.6f, ~0, QueryTriggerInteraction.Ignore))
+                        continue;
+                    bool doorway = false;
+                    if (local == Vector3.back)
+                        foreach (float dy in dockYs) if (y > dy - 0.3f && y < dy + 3.4f) doorway = true;
+                    if (doorway)
+                        continue;
+                    holes++;
+                    if (holes <= 12)
+                        log.LogWarning($"[Probe] {name} SHAFT HOLE at y {y:0.0} toward {local} from {origin}");
+                }
+            }
+            log.LogInfo($"[Probe] {name} SHAFT {(holes == 0 ? "ok" : "HOLES")}: {holes} of {rays} rays escaped, {bottom:0.0}..{top:0.0}");
+            return holes;
         }
 
         // Open the map through its debug switch, step through the floors the way the wheel would,
@@ -647,7 +748,10 @@ namespace ElevatorsProbe
             var already = new HashSet<EnemyParent>();
             foreach (EnemyParent p in EnemyDirector.instance.enemiesSpawned)
                 if (p != null && p.Spawned && p.Enemy != null && Mathf.Abs(p.Enemy.transform.position.y - up.y) < 4f) already.Add(p);
-            Vector3 start = FarPoint(ground, ground.y, 8f, 20f);
+            // Far from the dock, the way a roamer really is; near it only when the floor is small.
+            Vector3 start = FarPoint(ground, ground.y, 30f, 90f);
+            if (start == ground)
+                start = FarPoint(ground, ground.y, 8f, 20f);
             yield return PutMonster(name, monster, start, "COMES UP setup");
             PluginConfig.MonsterPatrolInterval.Value = 12f;
             log.LogInfo($"[Probe] {name} COMES UP: we hide at {hide}, {monster.enemyName} set down at {start}, {already.Count} monster(s) already upstairs, patrol every {PluginConfig.MonsterPatrolInterval.Value / Mathf.Max(1, Elevator.DockList().Count - 1):0}s");
@@ -727,7 +831,9 @@ namespace ElevatorsProbe
         // stand up; the director puts a fresh one at a first spawn point, so it is fetched after.
         private IEnumerator Summon(string name, Vector3 at, System.Action<EnemyParent?> got)
         {
-            string[] want = { "Rugrat", "Robe", "Huntsman", "Reaper", "Upscream", "Gnome", "Animal" };
+            var want = new List<string> { "Rugrat", "Robe", "Hunter", "Reaper", "Upscream", "Gnome", "Animal" };
+            if (wantMonster != null)
+                want.Insert(0, wantMonster);
             EnemySetup? pick = null;
             int bestRank = int.MaxValue;
             EnemyDirector director = EnemyDirector.instance;
@@ -739,7 +845,7 @@ namespace ElevatorsProbe
                 {
                     if (setup == null || setup.spawnObjects == null || setup.spawnObjects.Count == 0) continue;
                     string n = setup.spawnObjects[0].Prefab != null ? setup.spawnObjects[0].Prefab.name : setup.spawnObjects[0].ResourcePath ?? "";
-                    int rank = System.Array.FindIndex(want, w => n.Contains(w));
+                    int rank = want.FindIndex(w => n.Contains(w));
                     if (rank >= 0 && rank < bestRank) { bestRank = rank; pick = setup; }
                 }
             }
@@ -1026,6 +1132,49 @@ namespace ElevatorsProbe
             foreach (T item in items)
                 if (item != null && test(item)) n++;
             return n;
+        }
+    }
+
+    // Puts the wanted room in the lift cell, so a report about one room is tested in that room
+    // instead of rolled for.
+    [HarmonyPatch(typeof(LevelGenerator), "SpawnModule")]
+    internal static class ForceLiftRoomPatch
+    {
+        internal static bool Next;
+
+        private static void Prefix(int x, int y, Module.Type type)
+        {
+            Next = Probe.WantRoom != null && Session.Active && type == Module.Type.Normal && x == Session.LiftX && y == Session.LiftY;
+        }
+
+        private static void Postfix()
+        {
+            Next = false;
+        }
+    }
+
+    [HarmonyPatch(typeof(LevelGenerator), "PickModule")]
+    internal static class ForceLiftPickPatch
+    {
+        private static bool Prefix(LevelGenerator __instance, ref PrefabRef __result)
+        {
+            if (!ForceLiftRoomPatch.Next || Probe.WantRoom == null)
+                return true;
+            ForceLiftRoomPatch.Next = false;
+            foreach (List<PrefabRef> list in new[] { __instance.Level.ModulesNormal1, __instance.Level.ModulesNormal2, __instance.Level.ModulesNormal3 })
+            {
+                if (list == null)
+                    continue;
+                foreach (PrefabRef pr in list)
+                {
+                    if (pr != null && pr.IsValid() && (pr.PrefabName ?? "").Contains(Probe.WantRoom))
+                    {
+                        __result = pr;
+                        return false;
+                    }
+                }
+            }
+            return true;
         }
     }
 

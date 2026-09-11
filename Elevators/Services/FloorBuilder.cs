@@ -17,7 +17,7 @@ namespace Elevators.Services
             public int I1, I2, I3, O1, O2, O3;
         }
 
-        public static IEnumerator Build(LevelGenerator lg, Floor floor, float groundTop, float groundBottom, List<string> avoid, PrefabRef? liftPrefab = null, float liftRotation = 0f, int liftSide = -1)
+        public static IEnumerator Build(LevelGenerator lg, Floor floor, float groundTop, float groundBottom, List<string> avoid, PrefabRef? liftPrefab = null, float liftRotation = 0f, int liftSide = -1, List<string>? liftRoomsTaken = null)
         {
             Level level = lg.Level;
             Pool normal = MakePool(level.ModulesNormal1, level.ModulesNormal2, level.ModulesNormal3, avoid);
@@ -35,7 +35,8 @@ namespace Elevators.Services
             float pickTop = float.MinValue;
             foreach (FloorPlan.Cell cell in floor.Plan.Cells)
             {
-                if (liftPrefab != null && cell.X == floor.Plan.LiftX && cell.Y == floor.Plan.LiftY)
+                bool liftCell = cell.X == floor.Plan.LiftX && cell.Y == floor.Plan.LiftY;
+                if (liftPrefab != null && liftCell)
                 {
                     cell.RotationY = liftRotation;
                     picks.Add(liftPrefab);
@@ -53,7 +54,9 @@ namespace Elevators.Services
                     FloorPlan.Kind.DeadEnd when deadEnd.L1.Count > 0 => deadEnd,
                     _ => normal
                 };
-                PrefabRef pick = lg.PickModule(pool.L1, pool.L2, pool.L3, ref pool.I1, ref pool.I2, ref pool.I3, ref pool.O1, ref pool.O2, ref pool.O3);
+                PrefabRef pick = liftCell && liftSide >= 0 && liftRoomsTaken != null
+                    ? PickLiftRoom(lg, normal, liftRoomsTaken)
+                    : lg.PickModule(pool.L1, pool.L2, pool.L3, ref pool.I1, ref pool.I2, ref pool.I3, ref pool.O1, ref pool.O2, ref pool.O3);
                 picks.Add(pick);
                 if (ModuleExtents.TryMeasure(pick.Prefab, out float bottom, out float top))
                 {
@@ -112,6 +115,24 @@ namespace Elevators.Services
 
             lg.ModuleAmount += floor.Plan.Cells.Count;
             Plugin.LogAlways($"[Build] {floor.Name}: {floor.Plan.Cells.Count} rooms, {floor.Plan.Doors.Count} doors at y={floor.Y:0} (ground {groundBottom:0}..{groundTop:0}, rooms {pickBottom:0}..{pickTop:0})");
+        }
+
+        // A plain room for the lift cell that no other floor has at its own, so stepping out
+        // upstairs is not stepping back into the room just left. The level's own picker draws
+        // it; a level with nothing else to offer keeps the draw.
+        private static PrefabRef PickLiftRoom(LevelGenerator lg, Pool normal, List<string> taken)
+        {
+            PrefabRef pick = lg.PickModule(normal.L1, normal.L2, normal.L3, ref normal.I1, ref normal.I2, ref normal.I3, ref normal.O1, ref normal.O2, ref normal.O3);
+            for (int i = 0; i < 8 && taken.Contains(RoomName(pick)); i++)
+                pick = lg.PickModule(normal.L1, normal.L2, normal.L3, ref normal.I1, ref normal.I2, ref normal.I3, ref normal.O1, ref normal.O2, ref normal.O3);
+            taken.Add(RoomName(pick));
+            Plugin.LogInfo($"[Build] lift room: {RoomName(pick)}");
+            return pick;
+        }
+
+        private static string RoomName(PrefabRef pr)
+        {
+            return (pr.PrefabName ?? "").Replace("(Clone)", "").Trim();
         }
 
         private static Pool MakePool(List<PrefabRef> l1, List<PrefabRef> l2, List<PrefabRef> l3, List<string> avoid)

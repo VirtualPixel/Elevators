@@ -182,8 +182,18 @@ namespace Elevators.Services
             int wanted = missing + (move ? 1 : 0);
             if (wanted == 0)
                 return;
-            // The upper floor first: a basement can still be dropped at build time when the level
-            // runs too deep, and it would take the point with it.
+            int placed = MarkExtractions(wanted, rng);
+            // The ground swap only happens when its point was found a place.
+            moveExtraction = move && placed > 0;
+            if (placed < wanted)
+                Plugin.LogInfo($"[Plan] {wanted - placed} extraction point(s) found no dead end on the new floors");
+        }
+
+        // Dead ends on the new floors that become extraction rooms, upstairs first: a basement can
+        // still be dropped at build time when the level runs too deep, and it would take the point
+        // with it.
+        private static int MarkExtractions(int wanted, System.Random rng)
+        {
             var floors = new List<FloorPlan>();
             if (UpPlan != null) floors.Add(UpPlan);
             if (DownPlan != null) floors.Add(DownPlan);
@@ -200,10 +210,7 @@ namespace Elevators.Services
                     Plugin.LogInfo($"[Plan] an extraction point goes {(plan == UpPlan ? "upstairs" : "to the basement")}");
                 }
             }
-            // The ground swap only happens when its point was found a place.
-            moveExtraction = move && placed > 0;
-            if (placed < wanted)
-                Plugin.LogInfo($"[Plan] {wanted - placed} extraction point(s) found no dead end on the new floors");
+            return placed;
         }
 
         private static PrefabRef? PlainDeadEnd(LevelGenerator lg)
@@ -259,20 +266,26 @@ namespace Elevators.Services
             MeasureGround();
             SettleLiftSide();
             List<string> avoid = RoomFilter.Parse(PluginConfig.AvoidRooms.Value);
-            // The same lift room stands on every floor, turned the way the ground one landed: a shaft
-            // site's elevator room, or otherwise whatever room the game put at the ground lift cell.
-            // A random room there once left a dead end with no floor behind the opened wall.
+            // A shaft site's elevator room stands on every floor, turned the way the ground one
+            // landed, so the shafts line up; so does the ground room when the car has to stand in
+            // it. A doorway elevator gets a different plain room on each floor instead, so the
+            // step out upstairs is not into the room just left.
             PrefabRef? liftPrefab = null;
             float liftRotation = 0f;
+            var liftRooms = new List<string>();
             Module? groundLift = GroundLiftModule();
             if (groundLift != null)
             {
+                string groundName = groundLift.name.Replace("(Clone)", "").Trim();
+                liftRooms.Add(groundName);
                 if (Site != null && Site.Shaft && sitePrefab != null && groundLift.name.StartsWith(Site.ModuleName))
                     liftPrefab = sitePrefab;
-                else
+                else if (LiftSide < 0)
                     liftPrefab = PrefabOf(lg.Level, groundLift.name);
                 liftRotation = groundLift.transform.eulerAngles.y;
-                Plugin.LogInfo($"[Plan] lift room on every floor: {(liftPrefab != null ? liftPrefab.PrefabName : "none found for " + groundLift.name)} rot {liftRotation:0}");
+                Plugin.LogInfo(liftPrefab != null
+                    ? $"[Plan] lift room on every floor: {liftPrefab.PrefabName} rot {liftRotation:0}"
+                    : $"[Plan] lift rooms: a different plain room on each floor, not {groundName}");
             }
             // Each floor is published before its rooms spawn, so the rooms' own setup (room volumes,
             // the map) already knows which floor they belong to.
@@ -280,7 +293,7 @@ namespace Elevators.Services
             {
                 Up = new Floor(UpPlan, above: true);
                 SpanUnder(UpPlan, out float top, out float bottom);
-                IEnumerator build = FloorBuilder.Build(lg, Up, top, bottom, avoid, liftPrefab, liftRotation, LiftSide);
+                IEnumerator build = FloorBuilder.Build(lg, Up, top, bottom, avoid, liftPrefab, liftRotation, LiftSide, liftRooms);
                 while (build.MoveNext())
                     yield return build.Current;
                 if (Up.Modules.Count == 0)
@@ -290,7 +303,7 @@ namespace Elevators.Services
             {
                 Down = new Floor(DownPlan, above: false);
                 SpanUnder(DownPlan, out float top, out float bottom);
-                IEnumerator build = FloorBuilder.Build(lg, Down, top, bottom, avoid, liftPrefab, liftRotation, LiftSide);
+                IEnumerator build = FloorBuilder.Build(lg, Down, top, bottom, avoid, liftPrefab, liftRotation, LiftSide, liftRooms);
                 while (build.MoveNext())
                     yield return build.Current;
                 if (Down.Modules.Count == 0)
@@ -504,9 +517,15 @@ namespace Elevators.Services
             lift.ModuleConnectionSet(Has(groundGrid, x, y + 1), Has(groundGrid, x, y - 1) || y == 0, Has(groundGrid, x + 1, y), Has(groundGrid, x - 1, y), y == 0 && x == groundGrid.GetLength(0) / 2);
             if (planRng != null)
             {
+                // The ground floor already gave up its extraction rooms to these plans; the new
+                // plans carry the same number.
+                int extractions = (UpPlan?.Cells.FindAll(c => c.Extraction).Count ?? 0) + (DownPlan?.Cells.FindAll(c => c.Extraction).Count ?? 0);
                 bool? axis = Site != null && Site.Shaft ? liftAxisVertical : null;
                 if (UpPlan != null) UpPlan = FloorPlan.Build(groundGrid, LiftX, LiftY, upCells, passageCap, planRng, axis, LiftSide);
                 if (DownPlan != null) DownPlan = FloorPlan.Build(groundGrid, LiftX, LiftY, downCells, passageCap, planRng, axis, LiftSide);
+                int placed = MarkExtractions(extractions, planRng);
+                if (placed < extractions)
+                    Plugin.LogInfo($"[Plan] {extractions - placed} extraction point(s) found no dead end on the rebuilt floors");
             }
         }
 

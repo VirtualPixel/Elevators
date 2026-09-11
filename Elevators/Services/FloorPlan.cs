@@ -157,6 +157,14 @@ namespace Elevators.Services
                         cell.RotationY = liftAxisVertical == true ? 0f : 90f;
                         passages++;
                     }
+                    else if (cell == lift && liftOpenSide >= 0)
+                    {
+                        // A wall of the lift cell opens onto the car, so the room there is a plain
+                        // one whatever its neighbours: a dead end or a passage has no floor behind
+                        // a wall it never meant to open.
+                        cell.Kind = Kind.Normal;
+                        cell.RotationY = 90f * rng.Next(4);
+                    }
                     else
                     {
                         Classify(cell, ref passages, passageMax, rng);

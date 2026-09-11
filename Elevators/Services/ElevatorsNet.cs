@@ -149,6 +149,21 @@ namespace Elevators.Services
         }
 
         // Host to everyone: the doors are to stand open this long (zero shuts them).
+        internal static void SendArrive()
+        {
+            if (SemiFunc.IsMultiplayer() && Instance != null)
+                Instance.photonView.RPC(nameof(ElevatorsArriveRPC), RpcTarget.All);
+            else
+                Elevator.Arrive();
+        }
+
+        [PunRPC]
+        private void ElevatorsArriveRPC(PhotonMessageInfo _info = default(PhotonMessageInfo))
+        {
+            if (SemiFunc.MasterOnlyRPC(_info))
+                Elevator.Arrive();
+        }
+
         internal static void SendDoors(float seconds)
         {
             if (SemiFunc.IsMultiplayer() && Instance != null)
