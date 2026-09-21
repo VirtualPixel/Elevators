@@ -1142,7 +1142,7 @@ namespace ElevatorsProbe
     {
         internal static bool Next;
 
-        private static void Prefix(int x, int y, Module.Type type)
+        private static void Prefix([HarmonyArgument(0)] int x, [HarmonyArgument(1)] int y, [HarmonyArgument(4)] Module.Type type)
         {
             Next = Probe.WantRoom != null && Session.Active && type == Module.Type.Normal && x == Session.LiftX && y == Session.LiftY;
         }

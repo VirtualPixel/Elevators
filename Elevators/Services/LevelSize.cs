@@ -26,7 +26,9 @@ namespace Elevators.Services
             if (rooms >= 15) return 4;
             if (rooms >= 10) return 3;
             if (rooms >= 8) return 2;
-            if (rooms >= 6) return 1;
+            // The first level asks for five rooms, and five rooms deserve a lift too: the
+            // mod did nothing at all on level one.
+            if (rooms >= 5) return 1;
             return 0;
         }
 

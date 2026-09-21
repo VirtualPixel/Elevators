@@ -80,7 +80,7 @@ namespace Elevators.Services
                 ValuableVolume volume = volumes[type][next[type]];
                 PrefabRef valuable = valuables[type][Random.Range(0, valuables[type].Count)];
                 Plugin.LogVerbose($"[Loot] {paths[type]} {valuable.PrefabName} at {volume.transform.position}");
-                vd.SpawnValuable(valuable, volume, paths[type]);
+                GameCall.Invoke(vd, typeof(ValuableDirector), "SpawnValuable", valuable, volume, paths[type]);
                 next[type]++;
                 spawned++;
             }

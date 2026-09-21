@@ -56,7 +56,7 @@ namespace Elevators.Services
                 };
                 PrefabRef pick = liftCell && liftSide >= 0 && liftRoomsTaken != null
                     ? PickLiftRoom(lg, normal, liftRoomsTaken)
-                    : lg.PickModule(pool.L1, pool.L2, pool.L3, ref pool.I1, ref pool.I2, ref pool.I3, ref pool.O1, ref pool.O2, ref pool.O3);
+                    : Pick(lg, pool);
                 picks.Add(pick);
                 if (ModuleExtents.TryMeasure(pick.Prefab, out float bottom, out float top))
                 {
@@ -108,13 +108,28 @@ namespace Elevators.Services
                 float px = door.X * w - half * w;
                 float pz = door.Y * w + w / 2f;
                 if (door.RightEdge)
-                    lg.SpawnConnectObject(new Vector3(px + w / 2f, floor.Y, pz), new Vector3(0f, 90f, 0f));
+                    GameCall.Invoke(lg, typeof(LevelGenerator), "SpawnConnectObject", new Vector3(px + w / 2f, floor.Y, pz), new Vector3(0f, 90f, 0f));
                 else
-                    lg.SpawnConnectObject(new Vector3(px, floor.Y, pz + w / 2f), Vector3.zero);
+                    GameCall.Invoke(lg, typeof(LevelGenerator), "SpawnConnectObject", new Vector3(px, floor.Y, pz + w / 2f), Vector3.zero);
             }
 
             lg.ModuleAmount += floor.Plan.Cells.Count;
             Plugin.LogAlways($"[Build] {floor.Name}: {floor.Plan.Cells.Count} rooms, {floor.Plan.Doors.Count} doors at y={floor.Y:0} (ground {groundBottom:0}..{groundTop:0}, rooms {pickBottom:0}..{pickTop:0})");
+        }
+
+        // The level's own picker, which walks its three shuffled lists and keeps the cursors in
+        // the pool so a floor draws the same spread of rooms the ground floor would.
+        private static PrefabRef Pick(LevelGenerator lg, Pool pool)
+        {
+            object?[] args = { pool.L1, pool.L2, pool.L3, pool.I1, pool.I2, pool.I3, pool.O1, pool.O2, pool.O3 };
+            object? picked = GameCall.Invoke(lg, typeof(LevelGenerator), "PickModule", args, out object?[] bound);
+            pool.I1 = (int)bound[3]!;
+            pool.I2 = (int)bound[4]!;
+            pool.I3 = (int)bound[5]!;
+            pool.O1 = (int)bound[6]!;
+            pool.O2 = (int)bound[7]!;
+            pool.O3 = (int)bound[8]!;
+            return (PrefabRef)picked!;
         }
 
         // A plain room for the lift cell that no other floor has at its own, so stepping out
@@ -122,9 +137,9 @@ namespace Elevators.Services
         // it; a level with nothing else to offer keeps the draw.
         private static PrefabRef PickLiftRoom(LevelGenerator lg, Pool normal, List<string> taken)
         {
-            PrefabRef pick = lg.PickModule(normal.L1, normal.L2, normal.L3, ref normal.I1, ref normal.I2, ref normal.I3, ref normal.O1, ref normal.O2, ref normal.O3);
+            PrefabRef pick = Pick(lg, normal);
             for (int i = 0; i < 8 && taken.Contains(RoomName(pick)); i++)
-                pick = lg.PickModule(normal.L1, normal.L2, normal.L3, ref normal.I1, ref normal.I2, ref normal.I3, ref normal.O1, ref normal.O2, ref normal.O3);
+                pick = Pick(lg, normal);
             taken.Add(RoomName(pick));
             Plugin.LogInfo($"[Build] lift room: {RoomName(pick)}");
             return pick;

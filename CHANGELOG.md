@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Level one gets a floor. Five rooms were one short of the bar, so the first level of every run was plain.
+
 - The call button goes on the wall beside the doors, like a real elevator, and only falls back to a post when that wall has no room. It no longer ends up inside a wall or a shelf (Arctic Cross Corridors, Manor Master Bedroom).
 - The doorway marks on the map line up with the elevator doors.
 - Floors above and below get a different room at the elevator, so stepping out doesn't look like the room you just left.

@@ -189,7 +189,8 @@ namespace Elevators.Patches
             text.color = tint;
             // The disabled sign uses the lit surface shader, black under the map camera's ambient.
             // The font's own material is the plain unlit one.
-            Material face = text.font != null && text.font.material != null ? new Material(text.font.material) : text.fontMaterial;
+            Material? plain = text.font != null ? GameCall.Read<Material>(text.font, typeof(TMP_FontAsset), "material") : null;
+            Material face = plain != null ? new Material(plain) : text.fontMaterial;
             if (face != null && face.HasProperty("_FaceColor"))
                 face.SetColor("_FaceColor", tint);
             if (face != null)

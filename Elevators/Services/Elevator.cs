@@ -2623,7 +2623,7 @@ namespace Elevators.Services
                 }
                 else
                 {
-                    obj.impactDetector.DestroyObject();
+                    GameCall.Invoke(obj.impactDetector, typeof(PhysGrabObjectImpactDetector), "DestroyObject");
                 }
                 Plugin.LogInfo($"[Elevator] {obj.name} fell to the bottom of the shaft and was recovered");
             }

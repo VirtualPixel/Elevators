@@ -50,7 +50,9 @@ namespace Elevators.Patches
     [HarmonyPatch(typeof(LevelGenerator), "SpawnModule")]
     internal static class SpawnModulePatch
     {
-        private static void Prefix(int x, int y, Module.Type type) => Session.BeforeSpawn(x, y, type);
+        // Bound by position so a renamed parameter on the game's side cannot unbind the patch.
+        private static void Prefix([HarmonyArgument(0)] int x, [HarmonyArgument(1)] int y, [HarmonyArgument(4)] Module.Type type)
+            => Session.BeforeSpawn(x, y, type);
 
         private static void Postfix() => Session.Override = null;
     }
