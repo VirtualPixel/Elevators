@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A level point rides on the car floor, so roaming monsters wander into the lift on their own instead of only when chased in.
+
 - Level one gets a floor. Five rooms were one short of the bar, so the first level of every run was plain.
 
 - The call button goes on the wall beside the doors, like a real elevator, and only falls back to a post when that wall has no room. It no longer ends up inside a wall or a shelf (Arctic Cross Corridors, Manor Master Bedroom).

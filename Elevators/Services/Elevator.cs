@@ -678,6 +678,13 @@ namespace Elevators.Services
             foreach (NavMeshLink link in doorLinks)
                 if (link != null) Object.Destroy(link.gameObject);
             doorLinks.Clear();
+            if (carPoint != null)
+            {
+                LevelGenerator lgNow = LevelGenerator.Instance;
+                if (lgNow != null && lgNow.LevelPathPoints != null) lgNow.LevelPathPoints.Remove(carPoint);
+                Object.Destroy(carPoint.gameObject);
+                carPoint = null;
+            }
             LastPatrolRider = null;
             Arrivals.Clear();
             dockBlocks.Clear();
@@ -2683,6 +2690,11 @@ namespace Elevators.Services
         // out over the open shaft.
         private static readonly List<NavMeshObstacle> dockBlocks = new List<NavMeshObstacle>();
         private static readonly List<NavMeshLink> doorLinks = new List<NavMeshLink>();
+        // A level point on the car floor. Roaming monsters only ever walk to level points,
+        // so without one the car was a place they were chased into and never wandered into.
+        // It rides with the car; a roamer whose car left mid-walk fails the path and picks
+        // another point, the way it does for any spot it cannot reach.
+        private static LevelPoint? carPoint;
         internal static EnemyParent? LastPatrolRider;
         // Every monster the car has ever delivered somewhere this level, for the probe.
         internal static readonly HashSet<EnemyParent> Arrivals = new HashSet<EnemyParent>();
@@ -2806,6 +2818,17 @@ namespace Elevators.Services
                 link.autoUpdate = true;
                 link.area = 0;
                 doorLinks.Add(link);
+            }
+            if (carPoint == null && car != null && car.transform.parent != null && lg != null && lg.LevelPathPoints != null)
+            {
+                var spot = new GameObject("Elevators car point");
+                spot.transform.SetParent(car.transform.parent, false);
+                spot.transform.localPosition = new Vector3(0f, -FloorOffset + 0.05f, 0f);
+                carPoint = spot.AddComponent<LevelPoint>();
+                carPoint.ConnectedPoints = new List<LevelPoint>();
+                carPoint.AllLevelPoints = new List<LevelPoint>();
+                carPoint.DebugMeshActive = false;
+                lg.LevelPathPoints.Add(carPoint);
             }
             bool onMesh = docks.Count > 0 && NavMesh.SamplePosition(docks[0].Position, out _, 0.6f, NavMesh.AllAreas);
             Plugin.LogInfo($"[Elevator] car floor joined the navmesh at {docks.Count} docks, first dock on mesh: {onMesh}, doorway links {doorLinks.Count}");
