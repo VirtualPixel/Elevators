@@ -18,7 +18,7 @@ And then there's the elevator. I wanted the real thing, not a teleport: doors th
 
 It's the game's own elevator car, the one stuck in the Museum, given its job back. Press the call button and the doors open, or the car comes down the shaft to you. Step in, grab UP or DOWN, and the doors shut and the car carries you, you and whatever you dragged in with you. It lands with a thud and a shudder, waits a beat, and opens. Press the same button twice and it rides straight through to the floor after.
 
-- The buttons are the shop's pressable button, grab area and all, on the Museum's own wall plate. A press the car can't honour, UP on the top floor say, gets a refusal.
+- The buttons are the shop's pressable button, grab area and all, on the Museum's own wall plate. A press the car can't honor, UP on the top floor say, gets a refusal.
 - An OPEN button inside, a call button at every floor, and a roof hatch you grab and swing.
 - Doors open by button and on arrival, close on their own, and hold for anyone (or anything) standing in them.
 - Every floor's doorway carries the shaft's sound. You hear the car called, moving, and landing through the doors on any floor.
@@ -41,7 +41,7 @@ All of it configurable, all of it off with one switch if you want the floors wit
 
 ## The map
 
-Open the map and the wheel steps through the floors, each drawn on its own with its name on the screen. It opens on your floor and follows you between floors. The route to the extraction point, or to the truck once you're done, walks you to the nearest elevator when the goal is on another floor, and every elevator doorway is marked on the map in its own colour.
+Open the map and the wheel steps through the floors, each drawn on its own with its name on the screen. It opens on your floor and follows you between floors. The route to the extraction point, or to the truck once you're done, walks you to the nearest elevator when the goal is on another floor, and every elevator doorway is marked on the map in its own color.
 
 ## What changes, what doesn't
 
@@ -53,7 +53,7 @@ Open the map and the wheel steps through the floors, each drawn on its own with 
 
 ## Settings
 
-`BepInEx/config/Vippy.Elevators.cfg`, or in-game if you run [REPOConfig](https://thunderstore.io/c/repo/p/nickklmao/REPOConfig/).
+`BepInEx/config/Vippy.Elevators.cfg`, or in-game if you run [REPOConfig](https://thunderstore.io/c/repo/p/REPOModding/REPOConfig/).
 
 | Setting | Default | What it does |
 |---|---|---|
