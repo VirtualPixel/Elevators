@@ -22,6 +22,7 @@ namespace Elevators
             gameObject.hideFlags = HideFlags.HideAndDontSave;
 
             PluginConfig.Init(Config);
+            REPOLibCompat.Apply(base.Logger);
             gameObject.AddComponent<LiftService>();
             new Harmony(Info.Metadata.GUID).PatchAll();
 

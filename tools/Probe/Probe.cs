@@ -1074,7 +1074,7 @@ namespace ElevatorsProbe
                 else
                     profile.Append($" {z:0.0}:none");
             }
-            log.LogInfo($"[Probe] {name} NAV floor profile out through the doors (metres above the dock):{profile}");
+            log.LogInfo($"[Probe] {name} NAV floor profile out through the doors (meters above the dock):{profile}");
             var grid = new System.Text.StringBuilder();
             for (float z = 0f; z <= 3.0f; z += 0.3f)
             {
@@ -1087,7 +1087,7 @@ namespace ElevatorsProbe
                 grid.Append(" |");
             }
             log.LogInfo($"[Probe] {name} NAV grid (x -2.1..2.1 across, rows out of the car):{grid}");
-            log.LogInfo($"[Probe] {name} NAV axis car->room {axis} (0.3 m steps from the car centre out through the doors); in the gaps: {(seen.Count > 0 ? string.Join(", ", seen) : "nothing solid")}");
+            log.LogInfo($"[Probe] {name} NAV axis car->room {axis} (0.3 m steps from the car center out through the doors); in the gaps: {(seen.Count > 0 ? string.Join(", ", seen) : "nothing solid")}");
         }
 
         private static string? DockNamed(Vector3 pos)
@@ -1137,7 +1137,7 @@ namespace ElevatorsProbe
 
     // Puts the wanted room in the lift cell, so a report about one room is tested in that room
     // instead of rolled for.
-    [HarmonyPatch(typeof(LevelGenerator), "SpawnModule")]
+    [HarmonyPatch(typeof(LevelGenerator), "PlanModule")]
     internal static class ForceLiftRoomPatch
     {
         internal static bool Next;

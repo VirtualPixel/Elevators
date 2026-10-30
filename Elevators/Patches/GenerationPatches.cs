@@ -47,8 +47,10 @@ namespace Elevators.Patches
         private static void Prefix(LevelGenerator __instance) => Session.Plan(__instance);
     }
 
-    [HarmonyPatch(typeof(LevelGenerator), "SpawnModule")]
-    internal static class SpawnModulePatch
+    // The game picks each room while it plans the grid, so the override has to be in place before
+    // PlanModule asks PickModule, not when the room is spawned later.
+    [HarmonyPatch(typeof(LevelGenerator), "PlanModule")]
+    internal static class PlanModulePatch
     {
         // Bound by position so a renamed parameter on the game's side cannot unbind the patch.
         private static void Prefix([HarmonyArgument(0)] int x, [HarmonyArgument(1)] int y, [HarmonyArgument(4)] Module.Type type)
